@@ -119,7 +119,8 @@ export async function POST(request: Request) {
           { id: "ltx-i2v-pro", name: "LTX Video 2.3 图生视频 Pro (3LoRA双采样)" },
           { id: "ltx-t2v", name: "LTX Video 2.3 文生视频" },
           { id: "ltx-flf2v", name: "LTX Video 2.3 首尾帧视频" },
-          { id: "ltx-4grid", name: "LTX Video 2.3 四宫格分镜 (4图+PromptRelay)" },
+          { id: "ltx-4grid", name: "LTX-2.3 四宫格分镜（4图引导+音画同步）" },
+          { id: "ltx-2-multiguide", name: "LTX-2.3 多图引导（角色参考+分段提示）" },
         ],
       });
     }

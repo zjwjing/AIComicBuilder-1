@@ -344,7 +344,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
 
   async generateVideo(params: VideoGenerateParams): Promise<VideoGenerateResult> {
     const isLtxPro = this.model === "ltx-i2v-pro";
-    const is4Grid = this.model === "ltx-4grid";
+    const is4Grid = this.model === "ltx-4grid" || this.model === "ltx-2-multiguide";
     const isLTX = !isLtxPro && !is4Grid && this.model.startsWith("ltx-");
     const isFlf2v = this.model === "ltx-flf2v";
     const isT2v = this.model === "ltx-t2v";
@@ -356,11 +356,17 @@ export class ComfyUIVideoProvider implements VideoProvider {
     let fourGridImages: string[] = [];
 
     if (is4Grid) {
-      const refs = params.referenceImages;
-      if (!refs || refs.length < 4) {
-        throw new Error("LTX 4-grid requires exactly 4 reference images (referenceImages)");
+      imagePath = "firstFrame" in params && params.firstFrame
+        ? params.firstFrame
+        : "initialImage" in params && params.initialImage
+          ? params.initialImage
+          : null;
+      if (!imagePath) {
+        throw new Error("LTX multi-guide requires a starting image (firstFrame or initialImage)");
       }
-      fourGridImages = refs.slice(0, 4);
+      // Upload main image + up to 3 extra reference images
+      const refs = params.referenceImages ?? [];
+      fourGridImages = [imagePath, ...refs.slice(0, 3)];
       for (const img of fourGridImages) {
         await this.uploadImage(img);
       }
