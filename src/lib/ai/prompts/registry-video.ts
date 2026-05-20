@@ -1,4 +1,4 @@
-﻿import { PromptDefinition, slot, resolve, getPromptDefinition } from "./registry-helpers";
+﻿import { PromptDefinition, slot, resolve } from "./registry-helpers";
 import { languageRuleBlock } from "./blocks";
 // ─── 11. video_generate ─────────────────────────────────
 

@@ -7,8 +7,6 @@ import { GenerateRequestSchema, parseOrThrow } from "@/lib/validation";
 import { rateLimitMiddleware } from "@/lib/rate-limit";
 import type { ModelConfig } from "@/lib/generate-utils";
 import { summarizeProviderConfig } from "@/lib/generate-utils";
-import { enqueueTask } from "@/lib/task-queue";
-import type { TaskType } from "@/lib/task-queue";
 import { dispatchAction } from "@/lib/pipeline/handlers";
 
 export const maxDuration = 300;
@@ -45,15 +43,9 @@ export async function POST(
   });
 
   const handler = dispatchAction(action, projectId, userId, payload, modelConfig, episodeId);
-  if (handler) return handler;
-
-  const task = await enqueueTask({
-    type: action as NonNullable<TaskType>,
-    projectId,
-    payload: { projectId, ...payload, modelConfig, episodeId, userId },
-    ...(episodeId ? { episodeId } : {}),
-  });
-
-  return NextResponse.json(task, { status: 201 });
+  if (!handler) {
+    return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+  }
+  return handler;
 }
 
