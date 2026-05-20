@@ -13,7 +13,7 @@ export const projects = sqliteTable("projects", {
     .notNull()
     .default("draft"),
   finalVideoUrl: text("final_video_url"),
-  generationMode: text('generation_mode', { enum: ['keyframe', 'reference'] }).notNull().default('keyframe'),
+  generationMode: text('generation_mode', { enum: ['keyframe', 'reference', '4grid'] }).notNull().default('keyframe'),
   useProjectPrompts: integer("use_project_prompts").notNull().default(0),
   colorPalette: text("color_palette").default(""),
   worldSetting: text("world_setting").default(""),
@@ -42,7 +42,7 @@ export const episodes = sqliteTable("episodes", {
   })
     .notNull()
     .default("draft"),
-  generationMode: text("generation_mode", { enum: ["keyframe", "reference"] })
+  generationMode: text("generation_mode", { enum: ["keyframe", "reference", "4grid"] })
     .notNull()
     .default("keyframe"),
   description: text("description").default(""),

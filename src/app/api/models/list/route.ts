@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     const raw = await request.json();
     const body = parseOrThrow(ModelListSchema, raw);
 
-    if (body.protocol === "kling") {
+    if (body.protocol === "kling" && body.capability === "video") {
       return NextResponse.json({
         models: [
           { id: "kling-v1", name: "Kling v1" },
@@ -78,6 +78,14 @@ export async function POST(request: Request) {
       });
     }
 
+    if (body.protocol === "kling" && body.capability === "image") {
+      return NextResponse.json({
+        models: [
+          { id: "kling-v1", name: "Kling Image" },
+        ],
+      });
+    }
+
     if (body.protocol === "ucloud-seedance") {
       return NextResponse.json({
         models: [
@@ -87,7 +95,7 @@ export async function POST(request: Request) {
       });
     }
 
-    if (body.protocol === "wan") {
+    if (body.protocol === "wan" && body.capability === "video") {
       return NextResponse.json({
         models: [
           { id: "wan2.7-t2v", name: "Wan 2.7 文生视频" },
@@ -101,17 +109,31 @@ export async function POST(request: Request) {
       });
     }
 
-    if (body.protocol === "comfyui") {
+    if (body.protocol === "comfyui" && body.capability === "video") {
       return NextResponse.json({
         models: [
-          { id: "z-image-turbo-comfyui", name: "Z-Image Turbo (ComfyUI)" },
-          { id: "qwen-edit-dual", name: "Qwen Edit Dual (ComfyUI)" },
           { id: "wan2.2-i2v-comfyui", name: "Wan 2.2 图生视频 (ComfyUI)" },
+          { id: "wan-firstlast", name: "Wan 首尾帧视频 (ComfyUI)" },
+          { id: "wan-i2v", name: "Wan 图生视频 (ComfyUI)" },
+          { id: "ltx-i2v", name: "LTX Video 2.3 图生视频" },
+          { id: "ltx-i2v-pro", name: "LTX Video 2.3 图生视频 Pro (3LoRA双采样)" },
+          { id: "ltx-t2v", name: "LTX Video 2.3 文生视频" },
+          { id: "ltx-flf2v", name: "LTX Video 2.3 首尾帧视频" },
+          { id: "ltx-4grid", name: "LTX Video 2.3 四宫格分镜 (4图+PromptRelay)" },
         ],
       });
     }
 
-    if (body.protocol === "dashscope") {
+    if (body.protocol === "comfyui" && body.capability === "image") {
+      return NextResponse.json({
+        models: [
+          { id: "z-image-turbo-comfyui", name: "Z-Image Turbo (ComfyUI)" },
+          { id: "qwen-edit-dual", name: "Qwen Edit Dual (ComfyUI)" },
+        ],
+      });
+    }
+
+    if (body.protocol === "dashscope" && body.capability === "image") {
       return NextResponse.json({
         models: [
           { id: "wan2.7-image-pro", name: "Wan 2.7 Image Pro (4K)" },
@@ -129,6 +151,14 @@ export async function POST(request: Request) {
       return NextResponse.json({
         models: [
           { id: "sensenova-u1-fast", name: "SenseNova U1 Fast" },
+        ],
+      });
+    }
+
+    if (body.protocol === "asxs" && body.capability === "image") {
+      return NextResponse.json({
+        models: [
+          { id: "gpt-image-2", name: "GPT Image 2" },
         ],
       });
     }

@@ -1,4 +1,4 @@
-﻿import { PromptSlot, PromptCategory, PromptDefinition, slot, resolve } from "./registry-helpers";
+﻿import { PromptDefinition, slot, resolve } from "./registry-helpers";
 // ─── 1. script_generate ─────────────────────────────────
 
 const SCRIPT_GENERATE_ROLE_DEFINITION = `你是一位屡获殊荣的编剧，擅长视觉叙事和短片动画内容创作。你的剧本以电影级的节奏感、生动的画面描写和情感共鸣的对白著称。

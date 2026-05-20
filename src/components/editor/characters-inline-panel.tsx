@@ -20,7 +20,7 @@ interface Character {
 interface CharactersInlinePanelProps {
   characters: Character[];
   projectId: string;
-  generationMode: "keyframe" | "reference";
+  generationMode: "keyframe" | "reference" | "4grid";
   onUpdate: () => void;
 }
 

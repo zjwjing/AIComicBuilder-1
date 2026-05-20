@@ -51,11 +51,13 @@ export default function EpisodePreviewPage() {
   const hasReferenceVideos = project?.shots.some((s) => getReferenceVideoUrl(s)) ?? false;
   const hasBothModes = hasKeyframeVideos && hasReferenceVideos;
 
-  const [previewMode, setPreviewMode] = useState<"keyframe" | "reference">(generationMode);
+  const [previewMode, setPreviewMode] = useState<"keyframe" | "reference">(
+    generationMode === "4grid" ? "keyframe" : generationMode,
+  );
 
   // Sync previewMode when project loads
   useEffect(() => {
-    if (project) setPreviewMode(project.generationMode ?? "keyframe");
+    if (project) setPreviewMode(project.generationMode === "4grid" ? "keyframe" : (project.generationMode ?? "keyframe"));
   }, [project?.generationMode]);
 
   // Check if final video file actually exists
@@ -77,7 +79,6 @@ export default function EpisodePreviewPage() {
     previewMode === "reference" ? getSceneRefFrameUrl(shot) : getFirstFrameUrl(shot);
 
   const shotsWithVideo = project.shots.filter((s) => getVideoUrl(s));
-  const allShotsHaveVideo = project.shots.length > 0 && project.shots.every((s) => getVideoUrl(s));
   const completedVideos = shotsWithVideo.length;
   const currentShot = shotsWithVideo[selectedShot];
   const hasValidVideo = finalVideoUrl && videoValid === true;

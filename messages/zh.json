@@ -58,6 +58,7 @@
     "batchGenerateVideos": "批量生成视频",
     "generationModeKeyframe": "基于首尾帧",
     "generationModeReference": "基于参考图",
+    "generationMode4Grid": "四宫格分镜",
     "referenceCharactersLabel": "参考角色：{names}（{count} 个）",
     "noReferenceImages": "无可用参考图，请先为角色生成参考图",
     "batchGenerateSceneFrames": "批量生成场景参考帧",
@@ -374,7 +375,9 @@
       "shotSplitKeyframeAssets": "分镜·首尾帧提示词",
       "shotSplitKeyframeAssetsDesc": "基于已有镜头元数据生成首帧/尾帧的图像提示词",
       "shotSplitReferenceAssets": "分镜·参考图提示词",
-      "shotSplitReferenceAssetsDesc": "基于已有镜头元数据生成参考图的图像提示词"
+      "shotSplitReferenceAssetsDesc": "基于已有镜头元数据生成参考图的图像提示词",
+      "videoGenerate4Grid": "四宫格·视频提示词模板",
+      "videoGenerate4GridDesc": "LTX 2.3 四宫格模式下，构建四面板故事板视频的提示词模板"
     },
     "editor": {
       "slotMode": "插槽",
@@ -529,7 +532,11 @@
       "rules": "规则",
       "rulesDesc": "本提示词的核心规则集",
       "durationStrategy": "时长策略",
-      "durationStrategyDesc": "按镜头时长分级的描述颗粒度规则"
+      "durationStrategyDesc": "按镜头时长分级的描述颗粒度规则",
+      "structureTemplate": "四宫格结构模板",
+      "structureTemplateDesc": "四宫格 PANEL 1-4 的布局模板，支持 {{PLACEHOLDER}} 变量",
+      "qualityRules": "质量规则",
+      "qualityRulesDesc": "LTX 2.3 生成质量和风格规则"
     }
   }
 }

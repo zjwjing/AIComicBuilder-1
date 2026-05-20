@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { shots, projects, episodes } from "@/lib/db/schema";
+import { shots, projects, episodes, characters as charactersTable } from "@/lib/db/schema";
 import { resolveImageProvider, resolveAIProvider } from "@/lib/ai/provider-factory";
 import {
   type ModelConfig,
@@ -12,6 +12,7 @@ import {
   getEpisodeCharacters,
 } from "@/lib/generate-utils";
 import { extractJSON } from "@/lib/ai/ai-sdk";
+import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY, TEMPERATURE_STRUCTURED } from "@/lib/config/defaults";
 import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildRefImagePromptsRequest } from "@/lib/ai/prompts/ref-image-prompts";
 import {
@@ -54,14 +55,28 @@ export async function handleSingleRefImageGenerate(
 
   console.log(`[SingleRefImage] Shot ${shot.sequence}: generating scene-only ref image "${refImageId}"`);
 
-  const ratio = (payload?.ratio as string) || "16:9";
+  const ratio = (payload?.ratio as string) || DEFAULT_ASPECT_RATIO;
   const imgOpts = ratioToImageOpts(ratio);
   const imageProvider = resolveImageProvider(modelConfig);
 
+  // Collect character reference images for subject consistency
+  const subjectRefs: string[] = [];
+  if (entry.characters && entry.characters.length > 0) {
+    const chars = await db
+      .select({ name: charactersTable.name, referenceImage: charactersTable.referenceImage })
+      .from(charactersTable)
+      .where(inArray(charactersTable.name, entry.characters));
+    for (const c of chars) {
+      if (c.referenceImage) subjectRefs.push(c.referenceImage);
+    }
+  }
+
   try {
     const imagePath = await imageProvider.generateImage(entry.prompt, {
-      quality: "hd",
+      quality: DEFAULT_IMAGE_QUALITY,
       ...imgOpts,
+      ...(subjectRefs.length > 0 && { referenceImages: subjectRefs }),
+      ...(subjectRefs.length > 0 && entry.characters && { referenceLabels: entry.characters }),
     });
 
     await insertAssetVersion({
@@ -243,7 +258,7 @@ export async function handleGenerateRefPrompts(
 
       const result = await textProvider.generateText(promptRequest, {
         systemPrompt: refImageSystemPrompt,
-        temperature: 0.5,
+        temperature: TEMPERATURE_STRUCTURED,
       });
 
       const jsonMatch = result.match(/\[[\s\S]*\]/);
@@ -300,7 +315,7 @@ export async function handleBatchRefImageGenerate(
   }
 
   const overwrite = payload?.overwrite === true;
-  const ratio = (payload?.ratio as string) || "16:9";
+  const ratio = (payload?.ratio as string) || DEFAULT_ASPECT_RATIO;
   const imageOpts = ratioToImageOpts(ratio);
   const batchVersionId = payload?.versionId as string | undefined;
 
@@ -312,6 +327,16 @@ export async function handleBatchRefImageGenerate(
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
 
   const imageProvider = resolveImageProvider(modelConfig);
+
+  // Pre-fetch character reference images for subject consistency
+  const allChars = await db
+    .select({ name: charactersTable.name, referenceImage: charactersTable.referenceImage })
+    .from(charactersTable)
+    .where(eq(charactersTable.projectId, projectId));
+  const charRefMap = new Map<string, string>();
+  for (const c of allChars) {
+    if (c.referenceImage) charRefMap.set(c.name, c.referenceImage);
+  }
 
   const results: Array<{ shotId: string; sequence: number; status: string; generated: number; failed: number }> = [];
 
@@ -334,9 +359,20 @@ export async function handleBatchRefImageGenerate(
     let failed = 0;
     for (const entry of targets) {
       try {
+        // Collect character reference images for this entry
+        const entryRefs: string[] = [];
+        if (entry.characters) {
+          for (const name of entry.characters) {
+            const ref = charRefMap.get(name);
+            if (ref) entryRefs.push(ref);
+          }
+        }
+
         const imagePath = await imageProvider.generateImage(entry.prompt, {
-          quality: "hd",
+          quality: DEFAULT_IMAGE_QUALITY,
           ...imageOpts,
+          ...(entryRefs.length > 0 && { referenceImages: entryRefs }),
+          ...(entryRefs.length > 0 && entry.characters && { referenceLabels: entry.characters }),
         });
         await insertAssetVersion({
           shotId: shot.id, type: "reference", sequenceInType: entry.sequenceInType,
@@ -389,17 +425,39 @@ export async function handleSingleShotRefImageGenerateAll(
 
   console.log(`[SingleShotRefImageAll] Shot ${shot.sequence}: generating ${targets.length} ref images`);
 
-  const ratio = (payload?.ratio as string) || "16:9";
+  const ratio = (payload?.ratio as string) || DEFAULT_ASPECT_RATIO;
   const imgOpts = ratioToImageOpts(ratio);
   const imageProvider = resolveImageProvider(modelConfig);
+
+  // Collect character reference images for subject consistency
+  const charRefMap = new Map<string, string>();
+  if (projectId) {
+    const chars = await db
+      .select({ name: charactersTable.name, referenceImage: charactersTable.referenceImage })
+      .from(charactersTable)
+      .where(eq(charactersTable.projectId, projectId));
+    for (const c of chars) {
+      if (c.referenceImage) charRefMap.set(c.name, c.referenceImage);
+    }
+  }
 
   let generated = 0;
   let failed = 0;
   for (const entry of targets) {
     try {
+      const entryRefs: string[] = [];
+      if (entry.characters) {
+        for (const name of entry.characters) {
+          const ref = charRefMap.get(name);
+          if (ref) entryRefs.push(ref);
+        }
+      }
+
       const imagePath = await imageProvider.generateImage(entry.prompt, {
-        quality: "hd",
+        quality: DEFAULT_IMAGE_QUALITY,
         ...imgOpts,
+        ...(entryRefs.length > 0 && { referenceImages: entryRefs }),
+        ...(entryRefs.length > 0 && entry.characters && { referenceLabels: entry.characters }),
       });
       await insertAssetVersion({
         shotId: shot.id, type: "reference", sequenceInType: entry.sequenceInType,

@@ -37,8 +37,13 @@ function verifyToken(token: string): string | null {
   return uid;
 }
 
+/** Deterministic user id derived from AUTH_SECRET via HMAC-SHA256 (first 32 hex chars) */
+function deriveUserId(): string {
+  return crypto.createHmac("sha256", getSecret()).update("uid").digest("hex").slice(0, 32);
+}
+
 export function createSignedUserId(): string {
-  const uid = crypto.randomUUID().replace(/-/g, "");
+  const uid = deriveUserId();
   return `${uid}.${hmacSign(uid)}`;
 }
 

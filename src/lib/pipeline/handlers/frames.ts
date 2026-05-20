@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY } from "@/lib/config/defaults";
 import { shots, characters, episodeCharacters, projects } from "@/lib/db/schema";
 import { eq, and, asc, inArray } from "drizzle-orm";
 import {
@@ -144,7 +145,7 @@ export async function handleBatchFrameGenerate(
       });
       const firstFramePath = await ai.generateImage(firstPrompt, {
         ...imageOpts,
-        quality: "hd",
+        quality: DEFAULT_IMAGE_QUALITY,
         referenceImages: shotCharRefImages,
         referenceLabels: shotCharRefLabels,
       });
@@ -158,7 +159,7 @@ export async function handleBatchFrameGenerate(
       });
       const lastFramePath = await ai.generateImage(lastPrompt, {
         ...imageOpts,
-        quality: "hd",
+        quality: DEFAULT_IMAGE_QUALITY,
         referenceImages: [firstFramePath, ...shotCharRefImages],
         referenceLabels: ["首帧/First Frame", ...shotCharRefLabels],
       });
@@ -283,7 +284,7 @@ export async function handleSingleFrameGenerate(
     });
     const firstFramePath = await ai.generateImage(firstPrompt, {
       ...imageOpts,
-      quality: "hd",
+      quality: DEFAULT_IMAGE_QUALITY,
       referenceImages: shotCharRefImages,
     });
 
@@ -296,7 +297,7 @@ export async function handleSingleFrameGenerate(
     });
     const lastFramePath = await ai.generateImage(lastPrompt, {
       ...imageOpts,
-      quality: "hd",
+      quality: DEFAULT_IMAGE_QUALITY,
       referenceImages: [firstFramePath, ...shotCharRefImages],
     });
 
@@ -380,7 +381,7 @@ export async function handleSingleStoryboardEdit(
   try {
     const imagePath = await imageProvider.generateImage(prompt, {
       aspectRatio: payload?.ratio as string | undefined,
-      quality: "hd",
+      quality: DEFAULT_IMAGE_QUALITY,
       editBaseImage: fallbackBaseImage,
       referenceImages: references.map((r) => r.path),
       referenceLabels: references.map((r) => r.label || r.role),
@@ -436,7 +437,7 @@ export async function handleSingleSceneFrame(
 
     // Scene-only: no character reference images injected.
     const sceneFramePath = await imageProvider.generateImage(sceneFramePrompt, {
-      quality: "hd",
+      quality: DEFAULT_IMAGE_QUALITY,
     });
 
     {
@@ -486,7 +487,7 @@ export async function handleBatchSceneFrame(
   }
 
   const overwrite = payload?.overwrite === true;
-  const ratio = (payload?.ratio as string) || "16:9";
+  const ratio = (payload?.ratio as string) || DEFAULT_ASPECT_RATIO;
   const imageOpts = ratioToImageOpts(ratio);
   const batchVersionId = payload?.versionId as string | undefined;
 
@@ -525,7 +526,7 @@ export async function handleBatchSceneFrame(
     for (const entry of targets) {
       try {
         const imagePath = await imageProvider.generateImage(entry.prompt, {
-          quality: "hd",
+          quality: DEFAULT_IMAGE_QUALITY,
           ...imageOpts,
         });
         await insertAssetVersion({

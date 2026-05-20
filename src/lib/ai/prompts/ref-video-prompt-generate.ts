@@ -64,7 +64,7 @@ export function buildRefVideoPromptRequest(params: {
 
   lines.push(`剧本动作：${params.motionScript}`);
   lines.push(`机位指令：${params.cameraDirection}`);
-  lines.push(`时长：${params.duration}s`);
+  lines.push(`时长：${Math.min(params.duration, 10)}s`);
 
   if (params.dialogues?.length) {
     lines.push(

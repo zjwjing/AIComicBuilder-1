@@ -40,7 +40,7 @@ interface ShotDrawerProps {
   onShotChange: (id: string) => void;
   onUpdate: () => void;
   projectId: string;
-  generationMode: "keyframe" | "reference";
+  generationMode: "keyframe" | "reference" | "4grid";
   videoRatio: string;
   selectedVersionId: string | null;
   anyGenerating: boolean;
@@ -241,7 +241,14 @@ export function ShotDrawer({
     }
   }
 
-  const frameAssets = generationMode === "reference"
+  const frameAssets = generationMode === "4grid"
+    ? [
+        { src: firstFrameUrl, label: "PANEL 1（开场）" },
+        { src: sceneRefFrameUrl ?? firstFrameUrl, label: "PANEL 2（发展）" },
+        { src: lastFrameUrl, label: "PANEL 3（转折）" },
+        { src: sceneRefFrameUrl ?? lastFrameUrl, label: "PANEL 4（收束）" },
+      ]
+    : generationMode === "reference"
     ? [{ src: sceneRefFrameUrl, label: t("shot.sceneRefFrame") }]
     : [
         { src: firstFrameUrl, label: t("shot.firstFrame") },
@@ -386,10 +393,10 @@ export function ShotDrawer({
           {/* Step 2: Frames */}
           <section>
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[--text-muted]">
-              {generationMode === "reference" ? t("shot.stepSceneFrame") : t("shot.stepFrames")}
+              {generationMode === "reference" ? t("shot.stepSceneFrame") : generationMode === "4grid" ? "四宫格分镜帧" : t("shot.stepFrames")}
             </p>
             {hasFrame && (
-              <div className="mb-2 flex gap-2">
+              <div className={`mb-2 ${generationMode === "4grid" ? "grid grid-cols-2 gap-2" : "flex gap-2"}`}>
                 {frameAssets.map((asset, i) => (
                   <div
                     key={i}
@@ -397,7 +404,14 @@ export function ShotDrawer({
                     onClick={() => asset.src && setPreviewSrc(uploadUrl(asset.src))}
                   >
                     {asset.src
-                      ? <img src={uploadUrl(asset.src)} className="w-full object-contain" alt={asset.label} />
+                      ? <div>
+                          <img src={uploadUrl(asset.src)} className="w-full object-contain" alt={asset.label} />
+                          {generationMode === "4grid" && (
+                            <div className="border-t border-[--border-subtle] px-2 py-1 bg-emerald-50 text-center">
+                              <span className="text-[9px] font-medium text-emerald-700">{asset.label}</span>
+                            </div>
+                          )}
+                        </div>
                       : <div className="flex h-16 items-center justify-center"><ImageIcon className="h-4 w-4 text-[--text-muted]" /></div>
                     }
                   </div>
@@ -413,7 +427,9 @@ export function ShotDrawer({
               {(generatingFrames || generatingSceneFrame) ? <Loader2 className="h-3 w-3 animate-spin" /> : <ImageIcon className="h-3 w-3" />}
               {(generatingFrames || generatingSceneFrame)
                 ? t("common.generating")
-                : hasFrame ? t("shot.regenerateFrames") : t("project.generateFrames")
+                : generationMode === "4grid"
+                  ? (hasFrame ? "重新生成四宫格帧" : "生成四宫格帧")
+                  : hasFrame ? t("shot.regenerateFrames") : t("project.generateFrames")
               }
             </Button>
           </section>

@@ -17,7 +17,7 @@ type KanbanShot = Shot;
 
 interface ShotKanbanProps {
   shots: KanbanShot[];
-  generationMode: "keyframe" | "reference";
+  generationMode: "keyframe" | "reference" | "4grid";
   anyGenerating: boolean;
   onOpenDrawer: (id: string) => void;
   onBatchFrames: () => void;
@@ -42,7 +42,7 @@ interface KanbanColumn {
   icon: React.ReactNode;
 }
 
-function classifyShot(shot: KanbanShot, mode: "keyframe" | "reference") {
+function classifyShot(shot: KanbanShot, mode: "keyframe" | "reference" | "4grid") {
   // In reference mode, only sceneRefFrame counts as "has frame"
   const hasFrame = mode === "reference"
     ? !!getSceneRefFrameUrl(shot)

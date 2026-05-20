@@ -18,7 +18,7 @@ import { ShotCard } from "@/components/editor/shot-card";
 import { Button } from "@/components/ui/button";
 import { useTranslations, useLocale } from "next-intl";
 import { useState, useEffect, useRef, useMemo } from "react";
-import type { StoryboardVersion } from "@/stores/project-store";
+
 import { useModelGuard } from "@/hooks/use-model-guard";
 import {
   Film,
@@ -141,7 +141,7 @@ export default function EpisodeStoryboardPage() {
   // Check if all reference images are generated (for reference mode blocking)
   const allRefImagesGenerated = useMemo(() => {
     if (!project) return true;
-    const mode = (project.generationMode || "keyframe") as "keyframe" | "reference";
+    const mode = (project.generationMode || "keyframe") as "keyframe" | "reference" | "4grid";
     if (mode !== "reference") return true;
     for (const shot of project.shots) {
       const refOnly = getReferenceAssets(shot);
@@ -170,35 +170,24 @@ export default function EpisodeStoryboardPage() {
     }).length;
   }, [project?.shots]);
 
-  const shotsWithAllRefImages = useMemo(() => {
-    if (!project) return 0;
-    return project.shots.filter((s) => {
-      const refOnly = getReferenceAssets(s);
-      return refOnly.length > 0 && refOnly.every((r) => r.status === "completed" && r.fileUrl);
-    }).length;
-  }, [project?.shots]);
+  const nextVersionNum = useMemo(() => {
+    if (versions.length === 0) return 1;
+    return Math.max(...versions.map((v) => v.versionNum)) + 1;
+  }, [versions]);
 
   if (!project) return null;
 
   const totalShots = project.shots.length;
   const shotsWithFrames = project.shots.filter((s) => hasKeyframePair(s)).length;
-  const generationMode = (project.generationMode || "keyframe") as "keyframe" | "reference";
-  const shotsWithVideo = project.shots.filter((s) =>
-    generationMode === "reference" ? getReferenceVideoUrl(s) : getKeyframeVideoUrl(s)
-  ).length;
+  const generationMode = (project.generationMode || "keyframe") as "keyframe" | "reference" | "4grid";
   const shotsWithVideoPrompts = project.shots.filter((s) => s.videoPrompt).length;
-  const shotsWithSceneFrames = project.shots.filter((s) => getSceneRefFrameUrl(s)).length;
   const shotsWithFrameAny = project.shots.filter(
     (s) => getSceneRefFrameUrl(s) || getFirstFrameUrl(s) || getLastFrameUrl(s)
   ).length;
   const charactersWithRefs = project.characters.filter((c) => c.referenceImage);
   const hasReferenceImages = charactersWithRefs.length > 0;
 
-  const nextVersionNum = useMemo(() => {
-    if (versions.length === 0) return 1;
-    return Math.max(...versions.map((v) => v.versionNum)) + 1;
-  }, [versions]);
-
+  const stuckShotsCount = project.shots.filter((s) => s.status === "generating").length;
   const anyGenerating = generating || generatingFrames || generatingVideos || generatingSceneFrames || generatingRefImages || generatingVideoPrompts || generatingRefPrompts;
 
   const drawerShots = project.shots;
@@ -422,46 +411,6 @@ export default function EpisodeStoryboardPage() {
     }
   }
 
-  async function handleBatchGenerateRefImages() {
-    if (!project) return;
-    if (!imageGuard()) return;
-    setGeneratingRefImages(true);
-
-    try {
-      const modelConfig = getModelConfig();
-      const resp = await apiFetch(`/api/projects/${project.id}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "batch_ref_image_generate",
-          modelConfig,
-          episodeId: currentEpisodeId,
-          payload: { versionId: selectedVersionId },
-        }),
-      });
-
-      if (!resp.ok) throw new Error("Failed");
-      const data = await resp.json();
-
-      const totalGenerated = data.results?.reduce((sum: number, r: Record<string, number>) => sum + (r.generated || 0), 0) || 0;
-      const totalFailed = data.results?.reduce((sum: number, r: Record<string, number>) => sum + (r.failed || 0), 0) || 0;
-
-      if (totalFailed > 0) {
-        toast.error(`${totalFailed} reference images failed`);
-      } else if (totalGenerated > 0) {
-        toast.success(`${totalGenerated} reference images generated`);
-      } else {
-        toast.info("No pending reference images to generate");
-      }
-
-      await fetchProject(project.id, currentEpisodeId || undefined);
-    } catch (err) {
-      toast.error("Batch reference image generation failed");
-    } finally {
-      setGeneratingRefImages(false);
-    }
-  }
-
   async function handleBatchGenerateVideoPrompts() {
     if (!project) return;
     setGeneratingVideoPrompts(true);
@@ -608,6 +557,29 @@ export default function EpisodeStoryboardPage() {
       toast.success("All retries succeeded");
     } else {
       toast.error(`${newFailedIds.length} shots still failing`);
+    }
+  }
+
+  async function handleResetStuckShots() {
+    if (!project) return;
+    try {
+      const response = await apiFetch(`/api/projects/${project.id}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reset_stuck_shots",
+          payload: { versionId: selectedVersionId },
+          modelConfig: getModelConfig(),
+          episodeId: useProjectStore.getState().currentEpisodeId,
+        }),
+      });
+      if (!response.ok) throw new Error("Failed to reset stuck shots");
+      const data = await response.json() as { count: number };
+      toast.success(`已重置 ${data.count} 个卡住的镜头`);
+      await fetchProject(project.id, useProjectStore.getState().currentEpisodeId!);
+    } catch (err) {
+      toast.error("重置失败");
+      console.error(err);
     }
   }
 
@@ -986,7 +958,9 @@ export default function EpisodeStoryboardPage() {
                 ? t("common.generating")
                 : generationMode === "reference"
                   ? t("project.batchGenerateReferenceVideos")
-                  : t("project.batchGenerateVideos")}
+                  : generationMode === "4grid"
+                    ? "批量生成四宫格视频"
+                    : t("project.batchGenerateVideos")}
             </Button>
             <Button
               onClick={() =>
@@ -1043,6 +1017,18 @@ export default function EpisodeStoryboardPage() {
                   >
                     <RefreshCw className="mr-1 h-4 w-4" />
                     Retry {lastFailedShots.length} failed
+                  </Button>
+                )}
+                {stuckShotsCount > 0 && !batchProgress && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleResetStuckShots}
+                    disabled={anyGenerating}
+                    className="border-amber-500/50 text-amber-600 hover:bg-amber-50"
+                  >
+                    <RefreshCw className="mr-1 h-4 w-4" />
+                    Reset {stuckShotsCount} stuck
                   </Button>
                 )}
               </div>
@@ -1185,7 +1171,7 @@ export default function EpisodeStoryboardPage() {
       <NewVersionDialog
         open={newVersionDialogOpen}
         onOpenChange={setNewVersionDialogOpen}
-        onSubmit={async (name) => {
+        onSubmit={async (_name) => {
           await handleGenerateShots();
         }}
         nextVersionNum={nextVersionNum}

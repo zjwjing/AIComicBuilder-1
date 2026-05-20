@@ -3,13 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { id as genId } from "@/lib/id";
 
-interface AivideoTask {
-  id: string;
-  status: "SUBMITTED" | "PROGRESS" | "COMPLETED" | "FAILED" | "CANCEL";
-  output?: { url?: string };
-  message?: string;
-}
-
 export class AivideoVideoProvider implements VideoProvider {
   private apiKey: string;
   private baseUrl: string;

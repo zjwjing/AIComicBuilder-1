@@ -3,6 +3,7 @@ import type { ProviderConfig } from "@/lib/ai/ai-sdk";
 import { db } from "@/lib/db";
 import { characters, storyboardVersions, episodeCharacters, agentBindings, agents } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
+import { DEFAULT_ASPECT_RATIO, DEFAULT_CHARACTER_IMAGE_SIZE } from "@/lib/config/defaults";
 import { callAgent, validateAgentOutput, type AgentCategory } from "@/lib/ai/agent-caller";
 import path from "path";
 
@@ -46,7 +47,7 @@ export function ratioToImageOpts(ratio?: string): { aspectRatio?: string; size?:
     case "16:9":  return { aspectRatio: "16:9", size: "2560x1440" };
     case "9:16":  return { aspectRatio: "9:16", size: "1440x2560" };
     case "1:1":   return { aspectRatio: "1:1",  size: "2048x2048" };
-    default:      return { aspectRatio: "16:9", size: "2560x1440" };
+    default:      return { aspectRatio: DEFAULT_ASPECT_RATIO, size: DEFAULT_CHARACTER_IMAGE_SIZE };
   }
 }
 
@@ -147,8 +148,9 @@ export function isComfyUIVideoModel(config?: ProviderConfig | null): boolean {
   return config?.protocol === "comfyui";
 }
 
-export function clampComfyUIDuration(duration: number): number {
-  return Math.max(3, Math.min(10, duration));
+export function clampComfyUIDuration(duration: number, modelId?: string | null): number {
+  const maxDur = modelId?.startsWith("ltx-") ? 30 : 10;
+  return Math.max(5, Math.min(maxDur, duration));
 }
 
 export function shouldUseStrictJsonMode(config?: ProviderConfig | null): boolean {

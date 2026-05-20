@@ -200,7 +200,7 @@ interface Project {
   outline?: string;
   status: string;
   finalVideoUrl: string | null;
-  generationMode: "keyframe" | "reference";
+  generationMode: "keyframe" | "reference" | "4grid";
   characters: Character[];
   shots: Shot[];
   versions: StoryboardVersion[];

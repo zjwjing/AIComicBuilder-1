@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { DEFAULT_SHOT_DURATION, DEFAULT_CAMERA_DIRECTION } from "@/lib/config/defaults";
 import { projects, episodes, shots, characters, dialogues } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
@@ -94,7 +95,7 @@ export async function handleSingleVideoPrompt(
   try {
     const videoModelId = modelConfig?.video?.modelId;
     const videoMaxDuration = getModelMaxDuration(videoModelId);
-    const effectiveDuration = Math.min(shot.duration ?? 10, videoMaxDuration);
+    const effectiveDuration = Math.min(shot.duration ?? DEFAULT_SHOT_DURATION, videoMaxDuration);
     const textProvider = resolveAIProvider(modelConfig);
     const refVideoSystem = await resolvePrompt("ref_video_prompt", { userId, projectId });
     const motionContext = shot.motionScript || shot.videoScript || shot.prompt || "";
@@ -117,7 +118,7 @@ export async function handleSingleVideoPrompt(
     });
     const promptRequest = buildRefVideoPromptRequest({
       motionScript: motionContext,
-      cameraDirection: shot.cameraDirection || "static",
+      cameraDirection: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
       duration: effectiveDuration,
       characters: characterRefInfos,
       sceneFrames: sceneFrameInfos,
@@ -240,7 +241,7 @@ export async function handleBatchVideoPrompt(
       try {
         const shotLegacy = batchShotsLegacy.get(shot.id);
         const shotStart = Date.now();
-        const effectiveDuration = Math.min(shot.duration ?? 10, videoMaxDuration);
+        const effectiveDuration = Math.min(shot.duration ?? DEFAULT_SHOT_DURATION, videoMaxDuration);
         // Keyframe: first + last frames. Reference: ALL scene reference frames (ordered).
   const visionFrames: string[] = [];
   let sceneMetaList: Array<{ sceneName?: string } | null> = [];
@@ -302,7 +303,7 @@ export async function handleBatchVideoPrompt(
         });
         const promptRequest = buildRefVideoPromptRequest({
           motionScript: motionContext,
-          cameraDirection: shot.cameraDirection || "static",
+          cameraDirection: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
           duration: effectiveDuration,
           characters: characterRefInfos,
           sceneFrames: sceneFrameInfos,

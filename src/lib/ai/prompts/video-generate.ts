@@ -86,7 +86,8 @@ export function buildReferenceVideoPrompt(params: {
   const lines: string[] = [];
 
   if (params.duration) {
-    lines.push(`${L.duration}${L.colon}${params.duration}s${L.period}`);
+    const capped = Math.min(params.duration, 10);
+    lines.push(`${L.duration}${L.colon}${capped}s${L.period}`);
     lines.push(``);
   }
 
@@ -140,7 +141,6 @@ function buildInterpolationHeader(
   lang: "zh" | "en",
   slotContents: Record<string, string> | undefined
 ): string {
-  const L = getLabels(lang);
   const defaultFull = lang === "zh"
     ? "从起始帧到结束帧进行平滑插值。"
     : "Smoothly interpolate from the opening frame to the closing frame.";
@@ -193,7 +193,8 @@ export function buildVideoPrompt(params: {
   const lines: string[] = [];
 
   if (params.duration) {
-    lines.push(`${L.duration}${L.colon}${params.duration}s${L.period}`);
+    const capped = Math.min(params.duration, 10);
+    lines.push(`${L.duration}${L.colon}${capped}s${L.period}`);
     lines.push(``);
   }
 

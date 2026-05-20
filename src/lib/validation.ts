@@ -109,7 +109,7 @@ export const ProjectUpdateSchema = z.object({
   script: z.string().max(50000).optional(),
   outline: z.string().max(50000).optional(),
   status: z.enum(["draft", "processing", "completed"]).optional(),
-  generationMode: z.enum(["keyframe", "reference"]).optional(),
+  generationMode: z.enum(["keyframe", "reference", "4grid"]).optional(),
   useProjectPrompts: z.number().int().min(0).max(1).optional(),
   colorPalette: z.string().max(500).optional(),
   worldSetting: z.string().max(10000).optional(),
@@ -131,7 +131,7 @@ export const EpisodeUpdateSchema = z.object({
   script: z.string().max(50000).optional(),
   outline: z.string().max(50000).optional(),
   status: z.enum(["draft", "processing", "completed"]).optional(),
-  generationMode: z.enum(["keyframe", "reference"]).optional(),
+  generationMode: z.enum(["keyframe", "reference", "4grid"]).optional(),
   targetDuration: z.number().int().positive().optional(),
 });
 
@@ -145,6 +145,7 @@ export const ReorderEpisodesSchema = z.object({
 
 export const ModelListSchema = z.object({
   protocol: z.string().min(1),
+  capability: z.enum(["text", "image", "video"]).optional(),
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
 });

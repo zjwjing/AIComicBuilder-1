@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateText } from "ai";
 import { createLanguageModel } from "@/lib/ai/ai-sdk";
 import { resolveAIProvider } from "@/lib/ai/provider-factory";
+import { TEMPERATURE_GENERAL } from "@/lib/config/defaults";
 import type { ModelConfig } from "@/lib/generate-utils";
 
 export async function handleAiOptimizeText(
@@ -45,7 +46,7 @@ export async function handleAiOptimizeText(
       {
         systemPrompt,
         images,
-        temperature: 0.7,
+        temperature: TEMPERATURE_GENERAL,
       }
     );
     return NextResponse.json({ optimizedText: result.trim() });

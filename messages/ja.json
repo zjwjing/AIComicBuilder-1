@@ -57,6 +57,7 @@
     "batchGenerateVideos": "一括動画生成",
     "generationModeKeyframe": "キーフレームモード",
     "generationModeReference": "参照画像モード",
+    "generationMode4Grid": "4グリッド絵コンテ",
     "referenceCharactersLabel": "参照キャラ：{names}（{count}人）",
     "noReferenceImages": "参照画像がありません。先にキャラクター画像を生成してください",
     "batchGenerateSceneFrames": "シーン参照フレーム一括生成",

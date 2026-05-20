@@ -47,63 +47,15 @@ interface AssembleResult {
 }
 
 /**
- * Extract the last frame of a video as a JPEG image.
- * Returns the local file path of the extracted frame.
+ * Get audio file duration in seconds using ffprobe.
  */
-export async function extractLastFrame(videoPath: string): Promise<string> {
-  const ext = path.extname(videoPath);
-  const framePath = videoPath.replace(ext, `-lastframe-${genId()}.jpg`);
-
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg(videoPath)
-      .outputOptions(["-vframes", "1", "-q:v", "2"])
-      .output(framePath)
-      .on("end", () => resolve())
-      .on("error", (err) => reject(new Error(`Failed to extract last frame: ${err.message}`)))
-      .run();
+export function getAudioDuration(filePath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(path.resolve(filePath), (err, metadata) => {
+      if (err) reject(err);
+      else resolve(metadata.format.duration ?? 0);
+    });
   });
-
-  return framePath;
-}
-
-/**
- * Losslessly concatenate multiple MP4 videos with matching codecs.
- * Uses the concat demuxer for fast, quality-preserving joins.
- */
-export async function concatVideos(videoPaths: string[]): Promise<string> {
-  if (videoPaths.length === 0) throw new Error("No videos to concatenate");
-  if (videoPaths.length === 1) return videoPaths[0];
-
-  const outputPath = path.resolve(
-    path.dirname(videoPaths[0]),
-    `concat-${genId()}.mp4`
-  );
-  const listPath = path.resolve(
-    path.dirname(videoPaths[0]),
-    `concat-list-${genId()}.txt`
-  );
-
-  const fileList = videoPaths.map((p) => `file '${path.resolve(p).replace(/'/g, "'\\''")}'`).join("\n");
-  fs.writeFileSync(listPath, fileList, "utf-8");
-
-  await new Promise<void>((resolve, reject) => {
-    ffmpeg()
-      .input(listPath)
-      .inputOptions(["-f", "concat", "-safe", "0"])
-      .outputOptions(["-c", "copy"])
-      .output(outputPath)
-      .on("end", () => {
-        try { fs.unlinkSync(listPath); } catch { /* ignore */ }
-        resolve();
-      })
-      .on("error", (err) => {
-        try { fs.unlinkSync(listPath); } catch { /* ignore */ }
-        reject(new Error(`Concat failed: ${err.message}`));
-      })
-      .run();
-  });
-
-  return outputPath;
 }
 
 export async function generateTitleCard(
@@ -363,16 +315,23 @@ async function mixAudioTracks(
   const filterParts: string[] = [];
   const delayedLabels: string[] = [];
 
-  // Apply adelay to each dialogue audio clip
+  // Apply atrim (clip to window) + adelay (position at start) to each dialogue
   for (let i = 0; i < validEntries.length; i++) {
     const entry = validEntries[i];
     const delayMs = Math.round(entry.startTime * 1000);
+    const windowDur = entry.endTime - entry.startTime;
     const label = `d${i}`;
     delayedLabels.push(`[${label}]`);
 
-    filterParts.push(
-      `[${i + 1}:a]adelay=${delayMs}|${delayMs}[${label}]`
-    );
+    if (windowDur > 0.05) {
+      filterParts.push(
+        `[${i + 1}:a]atrim=end=${windowDur.toFixed(3)}[t${i}];[t${i}]adelay=${delayMs}|${delayMs}[${label}]`
+      );
+    } else {
+      filterParts.push(
+        `[${i + 1}:a]adelay=${delayMs}|${delayMs}[${label}]`
+      );
+    }
   }
 
   // Mix all dialogue audio tracks together
@@ -383,14 +342,18 @@ async function mixAudioTracks(
 
     if (bgmInputIndex >= 0) {
       // Mix dialogue + BGM
+      // amix(inputs=N) divides each input by N, so boost proportionally
+      const diaVol = delayedLabels.length * 4;
+      const bgmLvl = bgmVolume.toFixed(1);
       filterParts.push(
-        `[dialogue]volume=2.0[da];` +
-        `[${bgmInputIndex}:a]volume=${bgmVolume.toFixed(1)}[ba];` +
+        `[dialogue]volume=${diaVol}.0[da];` +
+        `[${bgmInputIndex}:a]volume=${bgmLvl}[ba];` +
         `[da][ba]amix=inputs=2:duration=longest:dropout_transition=0[a]`
       );
       dialogueMixLabel = "a";
     } else {
-      filterParts.push(`[dialogue]volume=2.0[da]`);
+      const diaVol = delayedLabels.length * 2;
+      filterParts.push(`[dialogue]volume=${diaVol}.0[da]`);
       dialogueMixLabel = "da";
     }
   } else if (bgmInputIndex >= 0) {
@@ -520,3 +483,5 @@ export async function assembleVideo(params: AssembleParams): Promise<AssembleRes
     srtPath: srtPath ? path.relative(process.cwd(), srtPath) : undefined,
   };
 }
+
+

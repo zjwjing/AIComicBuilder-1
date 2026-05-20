@@ -1,4 +1,4 @@
-﻿import { PromptDefinition, slot, resolve } from "./registry-helpers";
+﻿import { PromptDefinition, slot, resolve, getPromptDefinition } from "./registry-helpers";
 import { languageRuleBlock } from "./blocks";
 // ─── 11. video_generate ─────────────────────────────────
 
@@ -257,6 +257,76 @@ export const refVideoPromptDef: PromptDefinition = {
       r("motion_rules"),
       "",
       r("quality_benchmark"),
+    ].join("\n");
+  },
+};
+
+// ─── 13. video_generate_4grid ─────────────────────────────
+// LTX 2.3 4-grid video generation prompt template.
+// Uses {{PLACEHOLDER}} values replaced at runtime by the handler:
+//   {{PANEL1_DESC}} {{PANEL2_DESC}} {{PANEL3_DESC}} {{PANEL4_DESC}}
+//   {{SCENE_CONTEXT}} {{CAMERA_DIRECTION}} {{DURATION}}
+//   {{SHOT_CHARACTERS}} {{DIALOGUES}}
+
+const FOUR_GRID_ROLE_DEFINITION = `你是一位四宫格视频提示词专家，负责为 LTX 2.3 视频生成模型构建四宫格（2×2 网格布局）视频的提示词。
+
+四宫格视频包含四个连续画面，按左上→右上→左下→右下排列：
+- PANEL 1（开场）：故事开端，建立场景和角色
+- PANEL 2（发展）：故事推进，角色行动或情节展开
+- PANEL 3（转折）：故事高潮或转折点
+- PANEL 4（收束）：故事结尾或结果
+
+所有四个画面将作为一个整体视频生成，必须保持角色、场景和风格的高度一致性。`;
+
+const FOUR_GRID_STRUCTURE_TEMPLATE = `[FOUR-PANEL GRID STORYBOARD]
+PANEL 1 (开场): {{PANEL1_DESC}}
+PANEL 2 (发展): {{PANEL2_DESC}}
+PANEL 3 (转折): {{PANEL3_DESC}}
+PANEL 4 (收束): {{PANEL4_DESC}}
+
+场景背景: {{SCENE_CONTEXT}}
+镜头方向: {{CAMERA_DIRECTION}}
+时长: {{DURATION}} 秒
+风格: 电影化四格叙事，角色和光照贯穿一致
+
+角色: {{SHOT_CHARACTERS}}
+{{DIALOGUES}}`;
+
+const FOUR_GRID_QUALITY_RULES = `## LTX 2.3 生成质量规则
+- 四个面板的角色外观必须一致（服装、发型、面容、肤色）
+- 色调和光照连贯，不得出现面板间的跳变
+- 每个面板构图清晰，主体位于画面中央偏上区域
+- 面板过渡自然：左上→右上（时间推进），左下→右下（因果延续）
+- 每个面板描述控制在 50 字以内，聚焦核心动作
+- 尽可能在至少两个面板中重复出现相同角色或场景元素以建立视觉连接
+- 描述要写实、具体，避免抽象修饰词（"优雅地"、"美丽地"）
+- 使用具象的镜头语言：固定机位 / 缓慢推近 / 环绕 / 低角度仰拍等
+- 画面底部 20% 留出字幕安全区，关键动作在上方 2/3`;
+
+const FOUR_GRID_LANGUAGE_RULES = `${languageRuleBlock("zh")}\n仅输出提示词正文，无前言、无解释、无 markdown 格式。`;
+
+export const fourGridGenerateDef: PromptDefinition = {
+  key: "video_generate_4grid",
+  nameKey: "promptTemplates.prompts.videoGenerate4Grid",
+  descriptionKey: "promptTemplates.prompts.videoGenerate4GridDesc",
+  category: "video",
+  slots: [
+    slot("role_definition", FOUR_GRID_ROLE_DEFINITION, true),
+    slot("structure_template", FOUR_GRID_STRUCTURE_TEMPLATE, true),
+    slot("quality_rules", FOUR_GRID_QUALITY_RULES, true),
+    slot("language_rules", FOUR_GRID_LANGUAGE_RULES, false),
+  ],
+  buildFullPrompt(sc) {
+    const s = this.slots;
+    const r = (k: string) => resolve(sc, s, k);
+    return [
+      r("role_definition"),
+      "",
+      r("structure_template"),
+      "",
+      r("quality_rules"),
+      "",
+      r("language_rules"),
     ].join("\n");
   },
 };

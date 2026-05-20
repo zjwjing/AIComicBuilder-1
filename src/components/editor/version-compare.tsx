@@ -165,9 +165,6 @@ export function VersionCompare({
     }
   }, [currentEpisodeId, versions]);
 
-  const versionAMap = useMemo(() => new Map(shotsA.map((s) => [s.id, s])), [shotsA]);
-  const versionBMap = useMemo(() => new Map(shotsB.map((s) => [s.id, s])), [shotsB]);
-
   const maxLen = Math.max(shotsA.length, shotsB.length);
 
   const alignmentRows = useMemo(() => {

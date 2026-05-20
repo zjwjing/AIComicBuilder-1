@@ -12,7 +12,7 @@ import { scriptOutlineDef, scriptGenerateDef, scriptParseDef, scriptSplitDef } f
 import { characterExtractDef, importCharacterExtractDef, characterImageDef } from "./registry-character";
 import { shotSplitDef, shotKeyframeAssetsDef } from "./registry-shot";
 import { frameGenerateFirstDef, frameGenerateLastDef, sceneFrameGenerateDef, refImagePromptsDef } from "./registry-frame";
-import { videoGenerateDef, refVideoGenerateDef, refVideoPromptDef } from "./registry-video";
+import { videoGenerateDef, refVideoGenerateDef, refVideoPromptDef, fourGridGenerateDef } from "./registry-video";
 
 // Import helpers + registry access
 import { __setRegistryMap, getPromptDefinition, getDefaultSlotContents } from "./registry-helpers";
@@ -23,7 +23,7 @@ export const PROMPT_REGISTRY: PromptDefinition[] = [
   characterExtractDef, importCharacterExtractDef, characterImageDef,
   shotSplitDef, shotKeyframeAssetsDef,
   frameGenerateFirstDef, frameGenerateLastDef, sceneFrameGenerateDef, refImagePromptsDef,
-  videoGenerateDef, refVideoGenerateDef, refVideoPromptDef,
+  videoGenerateDef, refVideoGenerateDef, refVideoPromptDef, fourGridGenerateDef,
 ];
 
 export const PROMPT_REGISTRY_MAP: Record<string, PromptDefinition> =

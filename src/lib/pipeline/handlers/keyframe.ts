@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { TEMPERATURE_STRUCTURED } from "@/lib/config/defaults";
 import { db } from "@/lib/db";
 import { shots, episodes, projects, characterRelations } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
@@ -195,7 +196,7 @@ export async function handleGenerateKeyframePrompts(
 
       const result = await textProvider.generateText(promptRequest, {
         systemPrompt: keyframeSystemPrompt,
-        temperature: 0.5,
+        temperature: TEMPERATURE_STRUCTURED,
       });
 
       const jsonMatch = result.match(/\[[\s\S]*\]/);

@@ -15,6 +15,7 @@ import { Loader2, Download, Plus, Eye, EyeOff, Trash2, Search } from "lucide-rea
 
 const DEFAULT_BASE_URLS: Record<Protocol, string> = {
   openai: "https://api.openai.com",
+  asxs: "https://api.asxs.top/v1",
   sensenova: "https://token.sensenova.cn/v1",
   gemini: "https://generativelanguage.googleapis.com",
   seedance: "https://ark.cn-beijing.volces.com",
@@ -27,7 +28,7 @@ const DEFAULT_BASE_URLS: Record<Protocol, string> = {
   nvidia: "https://integrate.api.nvidia.com/v1",
   hidream: "http://localhost:7860",
   siliconflow: "https://api.siliconflow.cn",
-  manop: "http://localhost:7861",
+  framepack: "http://localhost:7860",
 };
 
 function getProtocolOptions(capability: Capability): { value: Protocol; label: string }[] {
@@ -41,6 +42,7 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
   if (capability === "image") {
     return [
       { value: "openai", label: "OpenAI" },
+      { value: "asxs", label: "ASXS" },
       { value: "sensenova", label: "SenseNova" },
       { value: "gemini", label: "Gemini" },
       { value: "kling", label: "Kling" },
@@ -88,6 +90,7 @@ export function ProviderForm({ provider }: ProviderFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           protocol: provider.protocol,
+          capability: provider.capability,
           baseUrl: provider.baseUrl,
           apiKey: provider.apiKey,
         }),

@@ -39,12 +39,29 @@ type ReferenceVideoParams = {
   initialImage: string;
 };
 
+export type SigmaPreset = "speed" | "balanced" | "quality";
+
+export type CameraControl =
+  | "dolly-in" | "dolly-out"
+  | "dolly-left" | "dolly-right"
+  | "pan-left" | "pan-right"
+  | "tilt-up" | "tilt-down"
+  | "zoom-in" | "zoom-out"
+  | "jib-up" | "jib-down"
+  | "roll-ccw" | "roll-cw"
+  | "orbit-ccw" | "orbit-cw"
+  | "static";
+
 export type VideoGenerateParams = (KeyframeVideoParams | ReferenceVideoParams) & {
   prompt: string;
   duration: number;
   ratio: string;
   /** Character/style reference images for consistency (e.g. Veo 3.1 referenceImages) */
   referenceImages?: string[];
+  /** LTX sigma schedule preset: speed (fewer steps), balanced (default), quality (more steps) */
+  sigmaPreset?: SigmaPreset;
+  /** LTX camera control LoRA type (requires LoRA file on disk) */
+  cameraControl?: CameraControl;
 };
 
 export interface VideoGenerateResult {

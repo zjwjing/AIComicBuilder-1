@@ -13,6 +13,8 @@ import { SenseNovaImageProvider } from "./providers/sensenova-image";
 import { SiliconFlowImageProvider } from "./providers/siliconflow-image";
 import { HiDreamImageProvider } from "./providers/hidream-image";
 import { AivideoVideoProvider } from "./providers/aivideo-video";
+import { ASXSImageProvider } from "./providers/asxs-image";
+import { FramepackVideoProvider } from "./providers/framepack-video";
 import { getAIProvider, getVideoProvider } from "./index";
 import type { AIProvider, VideoProvider } from "./types";
 
@@ -89,6 +91,13 @@ export function createAIProvider(config: ProviderConfig, uploadDir?: string): AI
         model: config.modelId,
         ...(uploadDir && { uploadDir }),
       });
+    case "asxs":
+      return new ASXSImageProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        model: config.modelId,
+        ...(uploadDir && { uploadDir }),
+      });
     case "nvidia":
       return new OpenAIProvider({
         apiKey: config.apiKey,
@@ -147,6 +156,12 @@ export function createVideoProvider(config: ProviderConfig, uploadDir?: string):
         ...(uploadDir && { uploadDir }),
         authToken: config.apiKey,
         authCookie: config.secretKey,
+      });
+    case "framepack":
+      console.log("FramePack Video Config:", { baseUrl: config.baseUrl });
+      return new FramepackVideoProvider({
+        baseUrl: config.baseUrl,
+        ...(uploadDir && { uploadDir }),
       });
     case "aivideo":
       return new AivideoVideoProvider({

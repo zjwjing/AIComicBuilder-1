@@ -29,18 +29,50 @@ export class HiDreamImageProvider implements AIProvider {
   async generateImage(prompt: string, options?: ImageOptions): Promise<string> {
     const baseUrl = this.baseUrl;
 
+    // Determine mode and encode reference images
+    let mode: "t2i" | "edit" | "subject";
+    const refs_b64: string[] = [];
+    let keep_original_aspect = false;
+
+    if (options?.referenceImages && options.referenceImages.length > 0) {
+      for (const imgPath of options.referenceImages) {
+        try {
+          const resolved = path.resolve(imgPath);
+          if (fs.existsSync(resolved)) {
+            const data = fs.readFileSync(resolved).toString("base64");
+            refs_b64.push(data);
+          }
+        } catch {
+          // skip unreadable
+        }
+      }
+    }
+
+    if (refs_b64.length >= 2) {
+      mode = "subject";
+    } else if (refs_b64.length === 1) {
+      mode = "edit";
+      keep_original_aspect = true;
+    } else {
+      mode = "t2i";
+    }
+
+    const size = options?.size || "2048x2048";
+    const [width, height] = size.split("x").map(Number);
+    const seed = 32;
+
     // Start generation job
     const startRes = await fetch(`${baseUrl}/api/generate/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        mode: "t2i",
+        mode,
         prompt,
-        width: 2048,
-        height: 2048,
-        seed: 32,
-        refs_b64: [],
-        keep_original_aspect: false,
+        width: isNaN(width) ? 2048 : width,
+        height: isNaN(height) ? 2048 : height,
+        seed,
+        refs_b64,
+        keep_original_aspect,
       }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -64,13 +96,13 @@ export class HiDreamImageProvider implements AIProvider {
     const filepath = path.join(dir, filename);
     fs.writeFileSync(filepath, buffer);
 
-    console.log(`[HiDream] Saved: ${filepath}`);
+    console.log(`[HiDream] Saved: ${filepath} (mode=${mode}, refs=${refs_b64.length})`);
     return filepath;
   }
 
   private async pollStream(baseUrl: string, jobId: string): Promise<string> {
     const url = `${baseUrl}/api/generate/stream/${jobId}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(300_000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(600_000) });
     if (!res.ok) throw new Error(`HiDream stream failed: ${res.status}`);
 
     const reader = res.body?.getReader();

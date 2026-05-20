@@ -1,9 +1,11 @@
 import type { ModelConfig } from "@/lib/generate-utils";
 import { handleScriptOutlineAction, handleScriptGenerate, handleScriptParseStream } from "./script";
 import { handleCharacterExtract, handleSingleCharacterImage, handleBatchCharacterImage } from "./character";
-import { handleShotSplitStream, handleSingleShotRewrite } from "./shots";
+import { handleShotSplitStream, handleSingleShotRewrite, handleResetStuckShots } from "./shots";
 import { handleBatchFrameGenerate, handleSingleFrameGenerate, handleSingleStoryboardEdit, handleSingleSceneFrame, handleBatchSceneFrame } from "./frames";
-import { handleSingleVideoGenerate, handleBatchVideoGenerate, handleSingleReferenceVideo, handleBatchReferenceVideo, handleVideoAssembleSync } from "./video";
+import { handleSingleVideoGenerate, handleBatchVideoGenerate } from "./video-keyframe";
+import { handleSingleReferenceVideo, handleBatchReferenceVideo } from "./video-reference";
+import { handleVideoAssembleSync } from "./video-assemble";
 import { handleSingleVideoPrompt, handleBatchVideoPrompt } from "./video-prompt";
 import { handleAiOptimizeText } from "./ai-optimize";
 import { handleSingleRefImageGenerate, handleBatchRefImageGenerate, handleGenerateRefPrompts, handleSingleShotRefImageGenerateAll } from "./ref-image";
@@ -27,6 +29,7 @@ const handlerMap: Record<string, HandlerFn> = {
   shot_split: handleShotSplitStream,
   generate_keyframe_prompts: handleGenerateKeyframePrompts,
   single_shot_rewrite: handleSingleShotRewrite,
+  reset_stuck_shots: handleResetStuckShots,
   batch_frame_generate: handleBatchFrameGenerate,
   single_frame_generate: handleSingleFrameGenerate,
   single_storyboard_edit: handleSingleStoryboardEdit,

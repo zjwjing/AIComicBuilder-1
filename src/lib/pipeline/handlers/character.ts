@@ -14,6 +14,7 @@ import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildCharacterExtractPrompt } from "@/lib/ai/prompts/character-extract";
 import { buildCharacterTurnaroundPrompt } from "@/lib/ai/prompts/character-image";
 import { resolveImageProvider } from "@/lib/ai/provider-factory";
+import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY, DEFAULT_CHARACTER_IMAGE_SIZE } from "@/lib/config/defaults";
 import { id as genId } from "@/lib/id";
 import {
   loadShotLegacyViewsBatch,
@@ -238,11 +239,24 @@ export async function handleSingleCharacterImage(
   const ai = resolveImageProvider(modelConfig);
   const prompt = buildCharacterTurnaroundPrompt(character.description || character.name, character.name);
 
+  // Pass existing reference images as subject references for consistency
+  const refImages: string[] = [];
+  if (character.referenceImage) refImages.push(character.referenceImage);
+  try {
+    const history = JSON.parse(character.referenceImageHistory || "[]") as string[];
+    for (const img of history) {
+      if (!refImages.includes(img)) refImages.push(img);
+    }
+  } catch {}
+  // Limit to 10 to avoid overloading
+  const subjectRefs = refImages.slice(0, 10);
+
   try {
     const imagePath = await ai.generateImage(prompt, {
-      size: "2560x1440",
-      aspectRatio: "16:9",
-      quality: "hd",
+      size: DEFAULT_CHARACTER_IMAGE_SIZE,
+      aspectRatio: DEFAULT_ASPECT_RATIO,
+      quality: DEFAULT_IMAGE_QUALITY,
+      ...(subjectRefs.length > 0 && { referenceImages: subjectRefs }),
     });
 
     // Append to history
@@ -331,10 +345,23 @@ export async function handleBatchCharacterImage(
   for (const character of needImages) {
     try {
       const prompt = buildCharacterTurnaroundPrompt(character.description || character.name, character.name);
+
+      // Pass existing reference images as subject references for consistency
+      const refImages: string[] = [];
+      if (character.referenceImage) refImages.push(character.referenceImage);
+      try {
+        const history = JSON.parse(character.referenceImageHistory || "[]") as string[];
+        for (const img of history) {
+          if (!refImages.includes(img)) refImages.push(img);
+        }
+      } catch {}
+      const subjectRefs = refImages.slice(0, 10);
+
       const imagePath = await ai.generateImage(prompt, {
-        size: "2560x1440",
+        size: DEFAULT_CHARACTER_IMAGE_SIZE,
         aspectRatio: "16:9",
-        quality: "hd",
+        quality: DEFAULT_IMAGE_QUALITY,
+        ...(subjectRefs.length > 0 && { referenceImages: subjectRefs }),
       });
 
       // Append to history

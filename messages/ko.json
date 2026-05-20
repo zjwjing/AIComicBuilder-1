@@ -57,6 +57,7 @@
     "batchGenerateVideos": "일괄 영상 생성",
     "generationModeKeyframe": "키프레임 모드",
     "generationModeReference": "참조 이미지 모드",
+    "generationMode4Grid": "4그리드 스토리보드",
     "referenceCharactersLabel": "참조 캐릭터: {names} ({count}명)",
     "noReferenceImages": "참조 이미지 없음 — 먼저 캐릭터 이미지를 생성하세요",
     "batchGenerateSceneFrames": "씬 참조 프레임 일괄 생성",

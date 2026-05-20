@@ -57,6 +57,7 @@
     "batchGenerateVideos": "Batch Generate Videos",
     "generationModeKeyframe": "Keyframe Mode",
     "generationModeReference": "Reference Image Mode",
+    "generationMode4Grid": "4-Grid Storyboard",
     "referenceCharactersLabel": "Reference: {names} ({count})",
     "noReferenceImages": "No reference images — generate character images first",
     "batchGenerateSceneFrames": "Batch Generate Scene Frames",
@@ -372,7 +373,9 @@
       "shotSplitKeyframeAssets": "Shot · Keyframe Asset Prompts",
       "shotSplitKeyframeAssetsDesc": "Generate first/last frame image prompts from existing shot metadata",
       "shotSplitReferenceAssets": "Shot · Reference Image Prompts",
-      "shotSplitReferenceAssetsDesc": "Generate reference image prompts from existing shot metadata"
+      "shotSplitReferenceAssetsDesc": "Generate reference image prompts from existing shot metadata",
+      "videoGenerate4Grid": "4-Grid · Video Prompt Template",
+      "videoGenerate4GridDesc": "LTX 2.3 4-grid mode: prompt template for four-panel storyboard video generation"
     },
     "editor": {
       "slotMode": "Slots",
@@ -527,7 +530,11 @@
       "rules": "Rules",
       "rulesDesc": "Core ruleset for this prompt",
       "durationStrategy": "Duration Strategy",
-      "durationStrategyDesc": "Description-granularity rules tiered by shot duration"
+      "durationStrategyDesc": "Description-granularity rules tiered by shot duration",
+      "structureTemplate": "4-Panel Structure Template",
+      "structureTemplateDesc": "Layout template for PANEL 1-4, supports {{PLACEHOLDER}} variables",
+      "qualityRules": "Quality Rules",
+      "qualityRulesDesc": "LTX 2.3 generation quality and style rules"
     }
   }
 }

@@ -480,6 +480,31 @@ export async function handleShotSplitStream(
   return NextResponse.json({ shots: allShots.length });
 }
 
+// --- reset_stuck_shots: Reset shots stuck at "generating" back to "pending" ---
+
+export async function handleResetStuckShots(
+  projectId: string,
+  _userId: string,
+  payload?: Record<string, unknown>,
+  _modelConfig?: ModelConfig,
+  episodeId?: string
+) {
+  const conditions = [eq(shots.projectId, projectId), eq(shots.status, "generating")];
+  if (episodeId) conditions.push(eq(shots.episodeId, episodeId));
+  if (payload?.versionId) conditions.push(eq(shots.versionId, payload.versionId as string));
+
+  const stuckShots = await db.select({ id: shots.id, sequence: shots.sequence }).from(shots).where(and(...conditions));
+
+  if (stuckShots.length === 0) {
+    return NextResponse.json({ results: [], message: "No stuck shots found" });
+  }
+
+  await db.update(shots).set({ status: "pending" }).where(and(...conditions));
+
+  console.log(`[ResetStuckShots] Reset ${stuckShots.length} shot(s)`);
+  return NextResponse.json({ results: stuckShots, count: stuckShots.length });
+}
+
 // --- single_shot_rewrite: regenerate text fields for one shot ---
 
 export async function handleSingleShotRewrite(

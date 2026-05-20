@@ -11,6 +11,7 @@ import {
 } from "@/lib/generate-utils";
 import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 
+import { TEMPERATURE_GENERAL, TEMPERATURE_CREATIVE } from "@/lib/config/defaults";
 import { buildScriptGeneratePrompt } from "@/lib/ai/prompts/script-generate";
 import { buildScriptParsePrompt } from "@/lib/ai/prompts/script-parse";
 
@@ -82,7 +83,7 @@ export async function handleScriptOutlineAction(
     model,
     system: outlineSystem,
     prompt: `创意构想：${idea}`,
-    temperature: 0.7,
+    temperature: TEMPERATURE_GENERAL,
     onFinish: async ({ text }) => {
       try {
         const outline = text.trim();
@@ -214,7 +215,7 @@ export async function handleScriptGenerate(
     model,
     system: scriptGenerateSystem,
     prompt: worldSettingContext + outlineContext + buildScriptGeneratePrompt(idea),
-    temperature: 0.8,
+    temperature: TEMPERATURE_CREATIVE,
     onFinish: async ({ text }) => {
       try {
         if (episodeId) {
@@ -310,7 +311,7 @@ export async function handleScriptParseStream(
     model,
     system: scriptParseSystem,
     prompt: buildScriptParsePrompt(script),
-    temperature: 0.7,
+    temperature: TEMPERATURE_GENERAL,
     onFinish: async ({ text }) => {
       try {
         const screenplay = extractJSON(text);
