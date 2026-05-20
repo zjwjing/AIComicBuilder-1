@@ -19,7 +19,11 @@ export type ShotAssetType =
   | "last_frame"
   | "reference"
   | "keyframe_video"
-  | "reference_video";
+  | "reference_video"
+  | "panel_1"
+  | "panel_2"
+  | "panel_3"
+  | "panel_4";
 
 export type ShotAssetStatus =
   | "pending"
@@ -303,6 +307,8 @@ export interface ShotLegacyView {
   sceneRefFrame: string | null;
   /** All active reference image assets, ordered by sequence_in_type */
   referenceImages: ShotAssetRow[];
+  /** 4-grid panel image URLs (index 0–3, null if not present) */
+  panels: [string | null, string | null, string | null, string | null];
 }
 
 export async function loadShotLegacyView(shotId: string): Promise<ShotLegacyView> {
@@ -335,6 +341,10 @@ export async function loadShotLegacyView(shotId: string): Promise<ShotLegacyView
   // reference anchor — map it to the first reference asset (sequence_in_type=0).
   const sceneRefAsset = referenceImages[0];
 
+  const panelAssets = [1, 2, 3, 4].map((i) =>
+    all.find((a) => a.type === `panel_${i}` as ShotAssetType && a.sequenceInType === 0)
+  );
+
   return {
     firstFrame: firstFrameAsset?.fileUrl ?? null,
     lastFrame: lastFrameAsset?.fileUrl ?? null,
@@ -344,6 +354,7 @@ export async function loadShotLegacyView(shotId: string): Promise<ShotLegacyView
     referenceVideoUrl: referenceVideoAsset?.fileUrl ?? null,
     sceneRefFrame: sceneRefAsset?.fileUrl ?? null,
     referenceImages,
+    panels: panelAssets.map((a) => a?.fileUrl ?? null) as [string | null, string | null, string | null, string | null],
   };
 }
 
@@ -387,6 +398,9 @@ export async function loadShotLegacyViewsBatch(
       .filter((a) => a.type === "reference")
       .sort((a, b) => a.sequenceInType - b.sequenceInType);
     const sceneRefAsset = referenceImages[0];
+    const panelAssets = [1, 2, 3, 4].map((i) =>
+      all.find((a) => a.type === `panel_${i}` as ShotAssetType && a.sequenceInType === 0)
+    );
     result.set(shotId, {
       firstFrame: firstFrameAsset?.fileUrl ?? null,
       lastFrame: lastFrameAsset?.fileUrl ?? null,
@@ -396,6 +410,7 @@ export async function loadShotLegacyViewsBatch(
       referenceVideoUrl: referenceVideoAsset?.fileUrl ?? null,
       sceneRefFrame: sceneRefAsset?.fileUrl ?? null,
       referenceImages,
+      panels: panelAssets.map((a) => a?.fileUrl ?? null) as [string | null, string | null, string | null, string | null],
     });
   }
   return result;

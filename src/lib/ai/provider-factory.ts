@@ -15,6 +15,7 @@ import { HiDreamImageProvider } from "./providers/hidream-image";
 import { AivideoVideoProvider } from "./providers/aivideo-video";
 import { ASXSImageProvider } from "./providers/asxs-image";
 import { FramepackVideoProvider } from "./providers/framepack-video";
+import { OmnigenImageProvider } from "./providers/omnigen-image";
 import { getAIProvider, getVideoProvider } from "./index";
 import type { AIProvider, VideoProvider } from "./types";
 
@@ -102,6 +103,12 @@ export function createAIProvider(config: ProviderConfig, uploadDir?: string): AI
       return new OpenAIProvider({
         apiKey: config.apiKey,
         baseURL: config.baseUrl,
+        model: config.modelId,
+        ...(uploadDir && { uploadDir }),
+      });
+    case "omnigen":
+      return new OmnigenImageProvider({
+        baseUrl: config.baseUrl,
         model: config.modelId,
         ...(uploadDir && { uploadDir }),
       });

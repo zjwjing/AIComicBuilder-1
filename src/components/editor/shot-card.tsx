@@ -16,6 +16,7 @@ import {
   getReferenceVideoUrl,
   getFirstFramePrompt,
   getLastFramePrompt,
+  getPanelUrl,
   type ShotAsset,
 } from "@/stores/project-store";
 import { useModelGuard } from "@/hooks/use-model-guard";
@@ -68,6 +69,10 @@ function assetToRefImage(a: ShotAsset, allAssets: ShotAsset[] = []): RefImage {
     reference: "reference",
     keyframe_video: "video",
     reference_video: "ref_video",
+    panel_1: "reference",
+    panel_2: "reference",
+    panel_3: "reference",
+    panel_4: "reference",
   };
   // Build the version history from all sibling rows in the same slot,
   // sorted oldest → newest by assetVersion. Each entry has fileUrl + asset id
@@ -201,6 +206,10 @@ export function ShotCard({
   const firstFrame = getFirstFrameUrl(shot);
   const lastFrame = getLastFrameUrl(shot);
   const sceneRefFrame = getSceneRefFrameUrl(shot);
+  const panel1 = getPanelUrl(shot, 1);
+  const panel2 = getPanelUrl(shot, 2);
+  const panel3 = getPanelUrl(shot, 3);
+  const panel4 = getPanelUrl(shot, 4);
   const videoUrl = generationMode === "reference" ? getReferenceVideoUrl(shot) : getKeyframeVideoUrl(shot);
   const startFrameDesc = getFirstFramePrompt(shot);
   const endFrameDesc = getLastFramePrompt(shot);
@@ -424,12 +433,22 @@ export function ShotCard({
     }
   }
 
-  async function handleClearFrame(field: "firstFrame" | "lastFrame" | "sceneRefFrame") {
-    const targetType: ShotAsset["type"] =
-      field === "firstFrame" ? "first_frame" : field === "lastFrame" ? "last_frame" : "reference";
-    // Remove the matching item from allRefItems
+  async function handleClearFrame(field: string) {
+    const FIELD_TO_TYPE: Record<string, ShotAsset["type"]> = {
+      firstFrame: "first_frame",
+      lastFrame: "last_frame",
+      sceneRefFrame: "reference",
+      panel1: "panel_1",
+      panel2: "panel_2",
+      panel3: "panel_3",
+      panel4: "panel_4",
+    };
+    const targetType = FIELD_TO_TYPE[field];
+    if (!targetType) return;
     const updated = allRefItems.filter(
-      (r) => !(r.type === targetType && (targetType !== "reference" || r.id === allRefItems.find((x) => x.type === "reference")?.id))
+      (r) => !(r.type === targetType && (field === "sceneRefFrame"
+        ? r.id === allRefItems.find((x) => x.type === "reference")?.id
+        : true))
     );
     await syncAssetsToBackend(updated);
   }
@@ -671,7 +690,7 @@ export function ShotCard({
     setGeneratingSceneFrame(false);
   }
 
-  function handleUploadFrame(field: "firstFrame" | "lastFrame" | "sceneRefFrame") {
+  function handleUploadFrame(field: string) {
     uploadFieldRef.current = field;
     uploadInputRef.current?.click();
   }
@@ -707,16 +726,16 @@ export function ShotCard({
 
   const frameAssets = generationMode === "4grid"
     ? [
-        { src: firstFrame, label: "PANEL 1", type: "image" as const, panelIdx: 0 },
-        { src: sceneRefFrame ?? firstFrame, label: "PANEL 2", type: "image" as const, panelIdx: 1 },
-        { src: lastFrame, label: "PANEL 3", type: "image" as const, panelIdx: 2 },
-        { src: sceneRefFrame ?? lastFrame, label: "PANEL 4", type: "image" as const, panelIdx: 3 },
+        { src: panel1, label: "PANEL 1", type: "image" as const, panelIdx: 0, field: "panel1" as const },
+        { src: panel2, label: "PANEL 2", type: "image" as const, panelIdx: 1, field: "panel2" as const },
+        { src: panel3, label: "PANEL 3", type: "image" as const, panelIdx: 2, field: "panel3" as const },
+        { src: panel4, label: "PANEL 4", type: "image" as const, panelIdx: 3, field: "panel4" as const },
       ]
     : generationMode === "reference"
-    ? [{ src: sceneRefFrame, label: t("shot.sceneRefFrame"), type: "image" as const, panelIdx: 0 }]
+    ? [{ src: sceneRefFrame, label: t("shot.sceneRefFrame"), type: "image" as const, panelIdx: 0, field: "sceneRefFrame" as const }]
     : [
-        { src: firstFrame, label: t("shot.firstFrame"), type: "image" as const, panelIdx: 0 },
-        { src: lastFrame, label: t("shot.lastFrame"), type: "image" as const, panelIdx: 1 },
+        { src: firstFrame, label: t("shot.firstFrame"), type: "image" as const, panelIdx: 0, field: "firstFrame" as const },
+        { src: lastFrame, label: t("shot.lastFrame"), type: "image" as const, panelIdx: 1, field: "lastFrame" as const },
       ];
 
   if (isCompact) {
@@ -733,7 +752,7 @@ export function ShotCard({
         <div className="flex gap-1">
           {(() => {
             const thumbs = generationMode === "4grid"
-              ? [firstFrame, sceneRefFrame ?? firstFrame, lastFrame, sceneRefFrame ?? lastFrame]
+              ? [panel1, panel2, panel3, panel4]
               : generationMode === "reference"
                 ? [sceneRefFrame, videoUrl]
                 : [firstFrame, lastFrame, videoUrl];
@@ -787,7 +806,7 @@ export function ShotCard({
         {/* Media thumbnails */}
         <div className="flex gap-1.5">
           {(generationMode === "4grid"
-            ? [firstFrame, sceneRefFrame ?? firstFrame, lastFrame, sceneRefFrame ?? lastFrame]
+            ? [panel1, panel2, panel3, panel4]
             : generationMode === "reference"
               ? [sceneRefFrame, videoUrl]
               : [firstFrame, lastFrame, videoUrl]
@@ -1206,7 +1225,7 @@ export function ShotCard({
               <div className="grid grid-cols-2 gap-2">
                 {frameAssets.map((asset, i) => {
                   const panelLabels = ["PANEL 1（开场）", "PANEL 2（发展）", "PANEL 3（转折）", "PANEL 4（收束）"];
-                  const fieldName = (["firstFrame", "sceneRefFrame", "lastFrame", "sceneRefFrame"] as const)[i];
+                  const fieldName = asset.field;
                   const isUploading = uploadingField === fieldName;
                   return (
                     <div key={i} className="rounded-lg border border-[--border-subtle] bg-white overflow-hidden">

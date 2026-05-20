@@ -29,6 +29,7 @@ const DEFAULT_BASE_URLS: Record<Protocol, string> = {
   hidream: "http://localhost:7860",
   siliconflow: "https://api.siliconflow.cn",
   framepack: "http://localhost:7860",
+  omnigen: "http://localhost:7860",
 };
 
 function getProtocolOptions(capability: Capability): { value: Protocol; label: string }[] {
@@ -50,6 +51,7 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
       { value: "siliconflow", label: "SiliconFlow" },
       { value: "comfyui", label: "ComfyUI" },
       { value: "hidream", label: "HiDream (本地)" },
+      { value: "omnigen", label: "OmniGen (本地)" },
     ];
   }
   // video

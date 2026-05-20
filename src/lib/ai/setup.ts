@@ -4,6 +4,7 @@ import { GeminiProvider } from "./providers/gemini";
 import { SeedanceProvider } from "./providers/seedance";
 import { ComfyUIImageProvider } from "./providers/comfyui-image";
 import { ComfyUIVideoProvider } from "./providers/comfyui-video";
+import { OmnigenImageProvider } from "./providers/omnigen-image";
 
 let initialized = false;
 
@@ -18,6 +19,15 @@ export function initializeProviders() {
       (uploadDir) =>
         new ComfyUIImageProvider({
           baseUrl: process.env.COMFYUI_BASE_URL,
+          ...(uploadDir && { uploadDir }),
+        }),
+    );
+  } else if (process.env.OMNIGEN_BASE_URL) {
+    setDefaultAIProvider(
+      new OmnigenImageProvider({ baseUrl: process.env.OMNIGEN_BASE_URL }),
+      (uploadDir) =>
+        new OmnigenImageProvider({
+          baseUrl: process.env.OMNIGEN_BASE_URL,
           ...(uploadDir && { uploadDir }),
         }),
     );

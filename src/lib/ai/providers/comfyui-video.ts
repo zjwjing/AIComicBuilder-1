@@ -103,42 +103,79 @@ export class ComfyUIVideoProvider implements VideoProvider {
     outputPrefix: string,
     sigmaPreset?: string,
   ): Record<string, unknown> {
-    const templatePath = path.join(this.templatesDir, "ltx-i2v-4grid.json");
+    const templatePath = path.join(this.templatesDir, "ltx-i2v-multiguide.json");
     let raw = fs.readFileSync(templatePath, "utf-8");
+
+    // Placeholder substitution
     raw = raw.replaceAll("{{filenamePrefix}}", outputPrefix);
+    raw = raw.replaceAll("{{startImage}}", images[0] ?? "");
+    raw = raw.replaceAll("{{charImage1}}", images[1] ?? images[0]);
+    raw = raw.replaceAll("{{charImage2}}", images[2] ?? images[0]);
+    raw = raw.replaceAll("{{charImage3}}", images[3] ?? images[0]);
+    raw = raw.replaceAll("{{charImage4}}", images[0]);
+
+    // Prompt: use single prompt (no timeline segmentation by default)
+    raw = raw.replaceAll("{{prompt}}", prompt);
+    raw = raw.replaceAll("{{localPrompts}}", prompt);
+    raw = raw.replaceAll("{{segmentLengths}}", String(Math.max(1, Math.round(durationSec * fps / 4))));
+
+    // Timeline data: single segment covering full duration
+    const totalFrames = durationSec * fps;
+    const segmentLen = Math.max(1, Math.round(totalFrames / 4));
+    const tl = {
+      segments: [
+        { prompt: "开场", length: segmentLen, color: "#4f8edc" },
+        { prompt: "发展", length: segmentLen, color: "#5cb85c" },
+        { prompt: "转折", length: segmentLen, color: "#e07b3a" },
+        { prompt: "收束", length: totalFrames - segmentLen * 3, color: "#d9534f" },
+      ],
+    };
+    raw = raw.replaceAll("{{timelineData}}", JSON.stringify(tl));
+    raw = raw.replaceAll("{{numGuides}}", String(Math.min(4, images.length)));
+
+    // Replace checkpoint placeholder with default path
+    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
+    raw = raw.replaceAll("CKPT_PLACEHOLDER", ckptName);
+
     const template = JSON.parse(raw) as Record<string, ComfyNode>;
     const inputs = (id: string) => template[id]?.inputs as Record<string, unknown> | undefined;
 
-    const n269 = inputs("269");
-    const n270 = inputs("270");
-    const n271 = inputs("271");
-    const n272 = inputs("272");
-    const n276 = inputs("276");
-    const n277 = inputs("277");
-    const n299 = inputs("299");
-    const n300 = inputs("300");
-    const n301 = inputs("301");
-    const n312 = inputs("312");
-    const n319 = inputs("319");
-    const n281 = inputs("281");
-    const n306 = inputs("306");
+    const n328 = inputs("328");
+    const n329 = inputs("329");
+    const n349 = inputs("349");
+    const n350 = inputs("350");
+    const n351 = inputs("351");
+    const n359 = inputs("359");
+    const n363 = inputs("363");
+    const n366 = inputs("366");
+    const n281 = inputs("332");
+    const n306 = inputs("354");
 
-    if (images[0] && n269) n269.image = images[0];
-    if (images[1] && n270) n270.image = images[1];
-    if (images[2] && n271) n271.image = images[2];
-    if (images[3] && n272) n272.image = images[3];
-    if (n276) n276.noise_seed = Math.floor(Math.random() * 1_000_000_000_000_000);
-    if (n277) n277.noise_seed = Math.floor(Math.random() * 1_000_000_000_000_000);
-    if (n299) n299.value = 1088;  // height
-    if (n300) n300.value = fps;
-    if (n301) n301.value = durationSec;
-    if (n312) n312.value = 1920;  // width
-    if (n319) n319.value = prompt;
+    if (n328) n328.noise_seed = Math.floor(Math.random() * 1_000_000_000_000_000);
+    if (n329) n329.noise_seed = Math.floor(Math.random() * 1_000_000_000_000_000);
+    if (n349) n349.value = 1088;
+    if (n350) n350.value = fps;
+    if (n351) n351.value = durationSec;
+    if (n359) n359.value = 1920;
+    if (n363) n363.value = prompt;
+    if (n366) n366.text = "";
 
     if (sigmaPreset) {
       const sigmas = getSigmaSchedules(sigmaPreset as "speed" | "balanced" | "quality");
       if (n281) n281.sigmas = sigmas.refiner;
       if (n306) n306.sigmas = sigmas.main;
+    }
+
+    // Remove unused character image nodes
+    for (let i = images.length + 1; i <= 4; i++) {
+      const loadId = [381, 385, 389, 397][i - 1];
+      const preprocId = [384, 388, 392][i - 2];
+      if (loadId <= 397) delete template[String(loadId)];
+      if (preprocId) {
+        delete template[String(preprocId)];
+        delete template[String(preprocId - 1)]; // ResizeImagesByLongerEdge
+        delete template[String(preprocId - 2)]; // ResizeImageMaskNode
+      }
     }
 
     return template;

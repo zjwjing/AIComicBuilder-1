@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { shots, characters, dialogues } from "@/lib/db/schema";
+import { shots, characters, dialogues, episodes, projects } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -23,6 +23,15 @@ import {
   insertAssetVersion,
 } from "@/lib/shot-asset-utils";
 
+async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
+  if (episodeId) {
+    const [ep] = await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
+    if (ep?.mode) return ep.mode;
+  }
+  const [proj] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
+  return proj?.mode ?? "keyframe";
+}
+
 export async function handleSingleVideoGenerate(
   projectId: string,
   userId: string,
@@ -43,7 +52,10 @@ export async function handleSingleVideoGenerate(
     return NextResponse.json({ error: "Shot not found" }, { status: 404 });
   }
   const shotView = await loadShotLegacyView(shot.id);
-  if (!shotView.firstFrame || !shotView.lastFrame) {
+  const genMode = await resolveGenerationMode(projectId, shot.episodeId);
+  const is4Grid = genMode === "4grid";
+
+  if (!is4Grid && (!shotView.firstFrame || !shotView.lastFrame)) {
     return NextResponse.json({ error: "Shot frames not generated yet" }, { status: 400 });
   }
 
@@ -62,8 +74,6 @@ export async function handleSingleVideoGenerate(
 
     const videoProvider = resolveVideoProvider(modelConfig, versionedUploadDir);
   const videoSlots = await resolveSlotContents("video_generate", { userId, projectId });
-
-  const is4Grid = modelConfig?.video?.modelId === "ltx-4grid";
 
   try {
     await db.update(shots).set({ status: "generating" }).where(eq(shots.id, shotId));
@@ -106,9 +116,9 @@ export async function handleSingleVideoGenerate(
     const videoPrompt = is4Grid
       ? await enhanceVideoPrompt(
           `[FOUR-PANEL GRID STORYBOARD]
-PANEL 1 (开场): ${shotView.startFrameDesc || videoScript}
-PANEL 2 (发展): ${shotView.startFrameDesc ? "Scene progresses: " + videoScript : videoScript} — camera transition continues
-PANEL 3 (转折): Story escalates — ${videoScript}
+PANEL 1 (开场): ${shotView.startFrameDesc || shot.prompt || videoScript}
+PANEL 2 (发展): ${shot.motionScript || videoScript}
+PANEL 3 (转折): ${shot.prompt || videoScript}
 PANEL 4 (收束): ${shotView.endFrameDesc || videoScript}
 
 Scene context: ${videoScript}
@@ -120,17 +130,18 @@ Style: cinematic sequential storytelling, consistent characters and lighting acr
       : await enhanceVideoPrompt(basePrompt, modelConfig);
 
     const fourGridRefs = is4Grid
-      ? [
-          shotView.firstFrame!,
-          shotView.sceneRefFrame || shotView.firstFrame!,
-          shotView.lastFrame!,
-          shotView.sceneRefFrame || shotView.lastFrame!,
-        ]
+      ? [shotView.panels[0], shotView.panels[1], shotView.panels[2], shotView.panels[3]].filter(Boolean) as string[]
       : undefined;
 
+    if (is4Grid && (!fourGridRefs || fourGridRefs.length < 4)) {
+      return NextResponse.json({ error: "4-grid requires all 4 panel images. Upload panel images first." }, { status: 400 });
+    }
+
     const result = await videoProvider.generateVideo({
-      firstFrame: shotView.firstFrame,
-      lastFrame: shotView.lastFrame,
+      ...(is4Grid
+        ? { initialImage: fourGridRefs![0], firstFrame: undefined, lastFrame: undefined }
+        : { firstFrame: shotView.firstFrame!, lastFrame: shotView.lastFrame! }
+      ),
       prompt: videoPrompt,
       duration: effectiveDuration,
       ratio,

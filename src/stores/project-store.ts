@@ -33,7 +33,11 @@ export type ShotAssetType =
   | "last_frame"
   | "reference"
   | "keyframe_video"
-  | "reference_video";
+  | "reference_video"
+  | "panel_1"
+  | "panel_2"
+  | "panel_3"
+  | "panel_4";
 
 export interface ShotAsset {
   id: string;
@@ -183,6 +187,21 @@ export function hasAllReferenceImages(shot: ShotLike): boolean {
 /** Whether the shot has both first and last frame image URLs. */
 export function hasKeyframePair(shot: ShotLike): boolean {
   return !!getFirstFrameUrl(shot) && !!getLastFrameUrl(shot);
+}
+
+/** Get the active panel image URL for a 4-grid shot (panel index 1–4). */
+export function getPanelUrl(shot: ShotLike, panel: 1 | 2 | 3 | 4): string | null {
+  const type = `panel_${panel}` as ShotAssetType;
+  return (
+    activeAssets(shot).find(
+      (a) => a.type === type && a.sequenceInType === 0
+    )?.fileUrl ?? null
+  );
+}
+
+/** Whether all 4-grid panels have images. */
+export function hasAllPanels(shot: ShotLike): boolean {
+  return [1, 2, 3, 4].every((p) => !!getPanelUrl(shot, p as 1 | 2 | 3 | 4));
 }
 
 export type StoryboardVersion = {
