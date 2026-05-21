@@ -50,7 +50,7 @@ import { id as genId } from "@/lib/id";
 // Local shape compatible with legacy rendering code, built from ShotAsset.
 interface RefImage {
   id: string;
-  type: "first_frame" | "last_frame" | "reference" | "video" | "ref_video";
+  type: "first_frame" | "last_frame" | "reference" | "video" | "ref_video" | "panel_1" | "panel_2" | "panel_3" | "panel_4";
   prompt: string;
   imagePath?: string;
   status: "pending" | "generated";
@@ -69,10 +69,10 @@ function assetToRefImage(a: ShotAsset, allAssets: ShotAsset[] = []): RefImage {
     reference: "reference",
     keyframe_video: "video",
     reference_video: "ref_video",
-    panel_1: "reference",
-    panel_2: "reference",
-    panel_3: "reference",
-    panel_4: "reference",
+    panel_1: "panel_1",
+    panel_2: "panel_2",
+    panel_3: "panel_3",
+    panel_4: "panel_4",
   };
   // Build the version history from all sibling rows in the same slot,
   // sorted oldest → newest by assetVersion. Each entry has fileUrl + asset id
@@ -274,7 +274,9 @@ export function ShotCard({
 
   // Derived state
   const hasText = !!(prompt || startFrameDesc || motionScript);
-  const hasFrame = !!(sceneRefFrame || firstFrame || lastFrame);
+  const hasFrame = generationMode === "4grid"
+    ? !!(panel1 || panel2 || panel3 || panel4)
+    : !!(sceneRefFrame || firstFrame || lastFrame);
   const hasFramePair = !!(firstFrame && lastFrame);
   const hasVideoPrompt = !!videoPrompt;
   const hasVideo = !!videoUrl;
@@ -391,6 +393,10 @@ export function ShotCard({
       reference: "reference",
       video: "keyframe_video",
       ref_video: "reference_video",
+      panel_1: "panel_1",
+      panel_2: "panel_2",
+      panel_3: "panel_3",
+      panel_4: "panel_4",
     };
     const type = reverseTypeMap[r.type];
     if (!type) return null;
@@ -483,10 +489,10 @@ export function ShotCard({
   }
 
   /**
-   * Save the prompt text for first_frame or last_frame.
+   * Save the prompt text for first_frame, last_frame, or panel types.
    * If the asset row doesn't exist yet, create it via the sync endpoint.
    */
-  async function saveKeyframePrompt(slot: "first_frame" | "last_frame", prompt: string) {
+  async function saveKeyframePrompt(slot: RefImage["type"], prompt: string) {
     const existing = allRefItems.find((r) => r.type === slot);
     let updated: RefImage[];
     if (existing) {
@@ -953,18 +959,27 @@ export function ShotCard({
           {generationMode === "4grid" ? (
             <div className="space-y-2.5">
               <div className="grid grid-cols-2 gap-2">
-                {[
-                  { key: "start", label: "PANEL 1（开场）", value: editStartFrame, setter: setEditStartFrame, dbField: "startFrameDesc" },
-                  { key: "prompt", label: "PANEL 2（发展）", value: editPrompt, setter: setEditPrompt, dbField: "prompt" },
-                  { key: "motion", label: "PANEL 3（转折）", value: editMotionScript, setter: setEditMotionScript, dbField: "motionScript" },
-                  { key: "end", label: "PANEL 4（收束）", value: editEndFrame, setter: setEditEndFrame, dbField: "endFrameDesc" },
-                ].map((panel) => (
+                {([
+                  { key: "start", label: "PANEL 1（开场）", value: editStartFrame, setter: setEditStartFrame, dbField: "startFrameDesc", panelType: "panel_1" as const },
+                  { key: "prompt", label: "PANEL 2（发展）", value: editPrompt, setter: setEditPrompt, dbField: "prompt", panelType: null },
+                  { key: "motion", label: "PANEL 3（转折）", value: editMotionScript, setter: setEditMotionScript, dbField: "motionScript", panelType: null },
+                  { key: "end", label: "PANEL 4（收束）", value: editEndFrame, setter: setEditEndFrame, dbField: "endFrameDesc", panelType: "panel_4" as const },
+                ] as const).map((panel) => {
+                  const save = (v: string) => {
+                    panel.setter(v);
+                    if (panel.panelType) {
+                      saveKeyframePrompt(panel.panelType, v);
+                    } else {
+                      patchShot({ [panel.dbField]: v });
+                    }
+                  };
+                  return (
                   <div key={panel.key}>
                     <div className="mb-1 flex items-center gap-1">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-600">{panel.label}</p>
                       <AiOptimizeButton
                         value={panel.value}
-                        onOptimized={(v) => { panel.setter(v); patchShot({ [panel.dbField]: v }); }}
+                        onOptimized={(v) => save(v)}
                         fieldLabel={panel.dbField}
                         projectId={projectId}
                       />
@@ -972,11 +987,12 @@ export function ShotCard({
                     <Textarea
                       value={panel.value}
                       onChange={(e) => panel.setter(e.target.value)}
-                      onBlur={() => patchShot({ [panel.dbField]: panel.value })}
+                      onBlur={() => save(panel.value)}
                       rows={2}
                     />
                   </div>
-                ))}
+                  );
+                })}
               </div>
               <div>
                 <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[--text-muted]">{t("shot.cameraDirection")}</p>

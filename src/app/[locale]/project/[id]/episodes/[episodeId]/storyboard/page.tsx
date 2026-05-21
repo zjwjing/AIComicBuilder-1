@@ -9,6 +9,8 @@ import {
   getReferenceVideoUrl,
   getReferenceAssets,
   hasKeyframePair,
+  hasAllPanels,
+  getPanelUrl,
   getFirstFramePrompt,
   getLastFramePrompt,
 } from "@/stores/project-store";
@@ -178,12 +180,21 @@ export default function EpisodeStoryboardPage() {
   if (!project) return null;
 
   const totalShots = project.shots.length;
-  const shotsWithFrames = project.shots.filter((s) => hasKeyframePair(s)).length;
   const generationMode = (project.generationMode || "keyframe") as "keyframe" | "reference" | "4grid";
+  const shotHasAnyFrame = (shot: typeof project.shots[number]) => {
+    if (generationMode === "reference") return !!getSceneRefFrameUrl(shot);
+    if (generationMode === "4grid") return [1, 2, 3, 4].some((p) => !!getPanelUrl(shot, p as 1 | 2 | 3 | 4));
+    return !!(getFirstFrameUrl(shot) || getLastFrameUrl(shot));
+  };
+  const shotHasRequiredFrames = (shot: typeof project.shots[number]) => {
+    if (generationMode === "reference") return !!getSceneRefFrameUrl(shot);
+    if (generationMode === "4grid") return hasAllPanels(shot);
+    return hasKeyframePair(shot);
+  };
+
+  const shotsWithFrames = project.shots.filter((s) => shotHasRequiredFrames(s)).length;
   const shotsWithVideoPrompts = project.shots.filter((s) => s.videoPrompt).length;
-  const shotsWithFrameAny = project.shots.filter(
-    (s) => getSceneRefFrameUrl(s) || getFirstFrameUrl(s) || getLastFrameUrl(s)
-  ).length;
+  const shotsWithFrameAny = project.shots.filter((s) => shotHasAnyFrame(s)).length;
   const charactersWithRefs = project.characters.filter((c) => c.referenceImage);
   const hasReferenceImages = charactersWithRefs.length > 0;
 
@@ -589,9 +600,7 @@ export default function EpisodeStoryboardPage() {
 
     const shots = project.shots;
     const needsText = shots.some((s) => !s.prompt && !s.motionScript);
-    const needsFrame = shots.some((s) =>
-      generationMode === "reference" ? !getSceneRefFrameUrl(s) : !getFirstFrameUrl(s) || !getLastFrameUrl(s)
-    );
+    const needsFrame = shots.some((s) => !shotHasRequiredFrames(s));
     const needsPrompt = shots.some((s) => !s.videoPrompt);
     const needsVideo = shots.some((s) =>
       generationMode === "reference" ? !getReferenceVideoUrl(s) : !getKeyframeVideoUrl(s)

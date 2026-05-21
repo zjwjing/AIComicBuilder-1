@@ -160,21 +160,29 @@ export function getSceneRefFrameUrl(shot: ShotLike): string | null {
   return getReferenceAssets(shot)[0]?.fileUrl ?? null;
 }
 
-/** First-frame prompt text (the LLM-generated description). */
+/** First-frame prompt text (the LLM-generated description). Falls back to panel_1 asset prompt for 4-grid mode. */
 export function getFirstFramePrompt(shot: ShotLike): string | null {
   return (
     activeAssets(shot).find(
       (a) => a.type === "first_frame" && a.sequenceInType === 0
-    )?.prompt ?? null
+    )?.prompt ??
+    activeAssets(shot).find(
+      (a) => a.type === "panel_1" && a.sequenceInType === 0
+    )?.prompt ??
+    null
   );
 }
 
-/** Last-frame prompt text. */
+/** Last-frame prompt text. Falls back to panel_4 asset prompt for 4-grid mode. */
 export function getLastFramePrompt(shot: ShotLike): string | null {
   return (
     activeAssets(shot).find(
       (a) => a.type === "last_frame" && a.sequenceInType === 0
-    )?.prompt ?? null
+    )?.prompt ??
+    activeAssets(shot).find(
+      (a) => a.type === "panel_4" && a.sequenceInType === 0
+    )?.prompt ??
+    null
   );
 }
 

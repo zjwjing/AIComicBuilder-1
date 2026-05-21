@@ -11,6 +11,8 @@ import {
   getSceneRefFrameUrl,
   getKeyframeVideoUrl,
   getReferenceVideoUrl,
+  getPanelUrl,
+  hasAllPanels,
 } from "@/stores/project-store";
 
 type KanbanShot = Shot;
@@ -43,10 +45,11 @@ interface KanbanColumn {
 }
 
 function classifyShot(shot: KanbanShot, mode: "keyframe" | "reference" | "4grid") {
-  // In reference mode, only sceneRefFrame counts as "has frame"
   const hasFrame = mode === "reference"
     ? !!getSceneRefFrameUrl(shot)
-    : !!(getFirstFrameUrl(shot) || getLastFrameUrl(shot));
+    : mode === "4grid"
+      ? hasAllPanels(shot)
+      : !!(getFirstFrameUrl(shot) && getLastFrameUrl(shot));
   const hasVideoPrompt = !!shot.videoPrompt;
   const hasVideo = !!(mode === "reference" ? getReferenceVideoUrl(shot) : getKeyframeVideoUrl(shot));
   if (!hasFrame) return "frames";
@@ -168,7 +171,9 @@ export function ShotKanban({
               </div>
             ) : (
               col.shots.map((shot) => {
-                const thumb = getFirstFrameUrl(shot) || getSceneRefFrameUrl(shot) || getLastFrameUrl(shot);
+                const thumb = generationMode === "4grid"
+                  ? getPanelUrl(shot, 1) || getPanelUrl(shot, 2) || getPanelUrl(shot, 3) || getPanelUrl(shot, 4)
+                  : getFirstFrameUrl(shot) || getSceneRefFrameUrl(shot) || getLastFrameUrl(shot);
                 return (
                   <div
                     key={shot.id}

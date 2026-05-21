@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY } from "@/lib/config/defaults";
-import { shots, characters, episodeCharacters, projects } from "@/lib/db/schema";
+import { shots, characters, episodeCharacters, projects, episodes } from "@/lib/db/schema";
 import { eq, and, asc, inArray } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -24,7 +24,67 @@ import {
   getActiveAsset,
   insertAssetVersion,
   patchAsset,
+  type ShotAssetType,
+  type ShotLegacyView,
 } from "@/lib/shot-asset-utils";
+
+async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
+  if (episodeId) {
+    const [ep] = await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
+    if (ep?.mode) return ep.mode;
+  }
+  const [project] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
+  return project?.mode ?? "keyframe";
+}
+
+function getPanelFrames(view: ShotLegacyView): string[] {
+  return view.panels.filter((p): p is string => !!p);
+}
+
+function buildPanelPrompt(params: {
+  panelLabel: string;
+  sceneDescription: string;
+  panelDescription: string;
+  characterDescriptions: string;
+}) {
+  return [
+    `生成四宫格分镜中的 ${params.panelLabel}，作为一张高质量图像。`,
+    "",
+    "=== 场景描述 ===",
+    params.sceneDescription,
+    "",
+    "=== 当前面板画面 ===",
+    params.panelDescription,
+    "",
+    "=== 角色描述 ===",
+    params.characterDescriptions,
+    "",
+    "要求：保持同一镜头内的角色、服装、光线、画风和空间连续性；画面应像漫画/分镜的单个 panel，而不是拼贴图。",
+  ].join("\n");
+}
+
+async function upsertGeneratedAsset(params: {
+  shotId: string;
+  type: ShotAssetType;
+  prompt: string;
+  fileUrl: string;
+  characters?: string[];
+}) {
+  const existing = await getActiveAsset(params.shotId, params.type, 0);
+  if (existing) {
+    await patchAsset(existing.id, { prompt: params.prompt, fileUrl: params.fileUrl, status: "completed" });
+  } else {
+    await insertAssetVersion({
+      shotId: params.shotId,
+      type: params.type,
+      sequenceInType: 0,
+      prompt: params.prompt,
+      fileUrl: params.fileUrl,
+      status: "completed",
+      characters: params.characters,
+    });
+  }
+}
 
 export async function handleBatchFrameGenerate(
   projectId: string,
@@ -55,6 +115,8 @@ export async function handleBatchFrameGenerate(
     return NextResponse.json({ results: [], message: "No shots found" });
   }
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
+  const generationMode = await resolveGenerationMode(projectId, episodeId);
+  const is4Grid = generationMode === "4grid";
 
   const versionedUploadDir = batchVersionId
     ? await getVersionedUploadDir(batchVersionId)
@@ -81,11 +143,12 @@ export async function handleBatchFrameGenerate(
   const charsWithImages = frameCharacters.filter((c) => c.referenceImage);
 
   const ai = resolveImageProvider(modelConfig, versionedUploadDir);
-  const results: Array<{ shotId: string; sequence: number; status: string; firstFrame?: string; lastFrame?: string; error?: string }> = [];
+  const results: Array<{ shotId: string; sequence: number; status: string; firstFrame?: string; lastFrame?: string; panels?: string[]; error?: string }> = [];
 
   const overwrite = payload?.overwrite === true;
   const needProcess = allShots.filter((s) => {
     const v = allShotsLegacy.get(s.id);
+    if (is4Grid) return overwrite || !v || getPanelFrames(v).length < 4;
     return overwrite || !v?.firstFrame || !v?.lastFrame;
   });
   const skipCount = allShots.length - needProcess.length;
@@ -104,7 +167,7 @@ export async function handleBatchFrameGenerate(
   for (const shot of allShots) {
     const shotLegacy = allShotsLegacy.get(shot.id);
 
-    if (!overwrite && shotLegacy?.firstFrame && shotLegacy?.lastFrame) {
+    if (!overwrite && (is4Grid ? shotLegacy && getPanelFrames(shotLegacy).length === 4 : shotLegacy?.firstFrame && shotLegacy?.lastFrame)) {
       doneCount++;
       console.log(`[BatchFrameGenerate] ⊙ shot ${shot.sequence} skipped (${doneCount}/${total})`);
       results.push({
@@ -135,6 +198,45 @@ export async function handleBatchFrameGenerate(
       const shotCharRefImages = filteredChars.map((c) => c.referenceImage!);
       const shotCharRefLabels = filteredChars.map((c) => c.name);
       const shotCharsForPersist = filteredChars.length > 0 ? filteredChars.map((c) => c.name) : undefined;
+
+      if (is4Grid) {
+        const panelInputs = [
+          { type: "panel_1" as const, label: "PANEL 1（开场）", description: shotLegacy?.startFrameDesc || shot.prompt || "" },
+          { type: "panel_2" as const, label: "PANEL 2（发展）", description: shot.prompt || shot.videoScript || "" },
+          { type: "panel_3" as const, label: "PANEL 3（转折）", description: shot.motionScript || shot.videoScript || shot.prompt || "" },
+          { type: "panel_4" as const, label: "PANEL 4（收束）", description: shotLegacy?.endFrameDesc || shot.videoScript || shot.prompt || "" },
+        ];
+        const generatedPanels: string[] = [];
+        for (const panel of panelInputs) {
+          const panelPrompt = buildPanelPrompt({
+            panelLabel: panel.label,
+            sceneDescription: shot.prompt || "",
+            panelDescription: panel.description,
+            characterDescriptions,
+          });
+          const panelPath = await ai.generateImage(panelPrompt, {
+            ...imageOpts,
+            quality: DEFAULT_IMAGE_QUALITY,
+            referenceImages: [...generatedPanels, ...shotCharRefImages],
+            referenceLabels: [...generatedPanels.map((_, i) => `Previous Panel ${i + 1}`), ...shotCharRefLabels],
+          });
+          await upsertGeneratedAsset({
+            shotId: shot.id,
+            type: panel.type,
+            prompt: panel.description,
+            fileUrl: panelPath,
+            characters: shotCharsForPersist,
+          });
+          generatedPanels.push(panelPath);
+        }
+
+        await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shot.id));
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        doneCount++;
+        console.log(`[BatchFrameGenerate] ✓ 4grid shot ${shot.sequence} (${doneCount}/${total}) ${elapsed}s`);
+        results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", panels: generatedPanels });
+        continue;
+      }
 
       // Each shot is independent — generate its own first frame from prompt.
       const firstPrompt = buildFirstFramePrompt({
@@ -240,6 +342,9 @@ export async function handleSingleFrameGenerate(
   if (!shot) {
     return NextResponse.json({ error: "Shot not found" }, { status: 404 });
   }
+  const generationMode = await resolveGenerationMode(projectId, episodeId || shot.episodeId);
+  const is4Grid = generationMode === "4grid";
+  const shotLegacy = await loadShotLegacyView(shotId);
 
   // Read prompts from shot_assets — they were generated by the dedicated
   // "生成首尾帧提示词" step. Each shot is independent: no continuity chain.
@@ -275,6 +380,39 @@ export async function handleSingleFrameGenerate(
 
   try {
     await db.update(shots).set({ status: "generating" }).where(eq(shots.id, shotId));
+
+    if (is4Grid) {
+      const panelInputs = [
+        { type: "panel_1" as const, label: "PANEL 1（开场）", description: shotLegacy.startFrameDesc || shot.prompt || "" },
+        { type: "panel_2" as const, label: "PANEL 2（发展）", description: shot.prompt || shot.videoScript || "" },
+        { type: "panel_3" as const, label: "PANEL 3（转折）", description: shot.motionScript || shot.videoScript || shot.prompt || "" },
+        { type: "panel_4" as const, label: "PANEL 4（收束）", description: shotLegacy.endFrameDesc || shot.videoScript || shot.prompt || "" },
+      ];
+      const generatedPanels: string[] = [];
+      for (const panel of panelInputs) {
+        const panelPrompt = buildPanelPrompt({
+          panelLabel: panel.label,
+          sceneDescription: shot.prompt || "",
+          panelDescription: panel.description,
+          characterDescriptions,
+        });
+        const panelPath = await ai.generateImage(panelPrompt, {
+          ...imageOpts,
+          quality: DEFAULT_IMAGE_QUALITY,
+          referenceImages: [...generatedPanels, ...shotCharRefImages],
+        });
+        await upsertGeneratedAsset({
+          shotId,
+          type: panel.type,
+          prompt: panel.description,
+          fileUrl: panelPath,
+        });
+        generatedPanels.push(panelPath);
+      }
+
+      await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shotId));
+      return NextResponse.json({ shotId, panels: generatedPanels, status: "ok" });
+    }
 
     const firstPrompt = buildFirstFramePrompt({
       sceneDescription: shot.prompt || "",

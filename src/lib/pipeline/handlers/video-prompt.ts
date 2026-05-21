@@ -16,8 +16,20 @@ import { extractJSON } from "@/lib/ai/ai-sdk";
 import { resolveAIProvider } from "@/lib/ai/provider-factory";
 import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildRefVideoPromptRequest } from "@/lib/ai/prompts/ref-video-prompt-generate";
-import { loadShotLegacyView, loadShotLegacyViewsBatch } from "@/lib/shot-asset-utils";
+import { loadShotLegacyView, loadShotLegacyViewsBatch, type ShotLegacyView } from "@/lib/shot-asset-utils";
 import type { AgentCategory } from "@/lib/ai/agent-caller";
+
+function getPanelFrames(view: ShotLegacyView): string[] {
+  return view.panels.filter((p): p is string => !!p);
+}
+
+function getPanelFrameInfos(frameCount: number, characterCount: number) {
+  const labels = ["PANEL 1（开场）", "PANEL 2（发展）", "PANEL 3（转折）", "PANEL 4（收束）"];
+  return Array.from({ length: frameCount }, (_, i) => ({
+    label: labels[i] ?? `PANEL ${i + 1}`,
+    index: characterCount + i + 1,
+  }));
+}
 
 export async function handleSingleVideoPrompt(
   projectId: string,
@@ -49,7 +61,10 @@ export async function handleSingleVideoPrompt(
   // scene shots (ground → sky etc.) get the full spatial context.
   const visionFrames: string[] = [];
   const sceneMetaList: Array<{ sceneName?: string } | null> = [];
-  if (genMode === "reference") {
+  if (genMode === "4grid") {
+    visionFrames.push(...getPanelFrames(shotView));
+    sceneMetaList.push(...visionFrames.map(() => null));
+  } else if (genMode === "reference") {
     const sceneAssets = shotView.referenceImages
       .filter((r) => r.fileUrl)
       .sort((a, b) => a.sequenceInType - b.sequenceInType);
@@ -112,10 +127,12 @@ export async function handleSingleVideoPrompt(
       index: i + 1,
       visualHint: c.visualHint,
     }));
-    const sceneFrameInfos = visionFrames.map((_, i) => {
-      const name = sceneMetaList[i]?.sceneName || (visionFrames.length > 1 ? `场景-${i + 1}` : `场景`);
-      return { label: name, index: charsWithRefsHere.length + i + 1 };
-    });
+    const sceneFrameInfos = genMode === "4grid"
+      ? getPanelFrameInfos(visionFrames.length, charsWithRefsHere.length)
+      : visionFrames.map((_, i) => {
+          const name = sceneMetaList[i]?.sceneName || (visionFrames.length > 1 ? `场景-${i + 1}` : `场景`);
+          return { label: name, index: charsWithRefsHere.length + i + 1 };
+        });
     const promptRequest = buildRefVideoPromptRequest({
       motionScript: motionContext,
       cameraDirection: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
@@ -213,12 +230,6 @@ export async function handleBatchVideoPrompt(
 
   const batchCharacters = await getEpisodeCharacters(projectId, episodeId);
 
-  // Only process shots that have frames
-  const eligible = batchShots.filter((s) => {
-    const v = batchShotsLegacy.get(s.id);
-    return v?.firstFrame || v?.lastFrame || v?.sceneRefFrame;
-  });
-
   // Determine generation mode for frame selection
   let batchGenMode = "keyframe";
   if (episodeId) {
@@ -228,6 +239,15 @@ export async function handleBatchVideoPrompt(
     const [proj] = await db.select({ generationMode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
     batchGenMode = proj?.generationMode ?? "keyframe";
   }
+
+  // Only process shots that have the frame assets required by the active mode.
+  const eligible = batchShots.filter((s) => {
+    const v = batchShotsLegacy.get(s.id);
+    if (!v) return false;
+    if (batchGenMode === "4grid") return getPanelFrames(v).length > 0;
+    if (batchGenMode === "reference") return v.referenceImages.some((r) => r.fileUrl) || !!v.sceneRefFrame;
+    return !!(v.firstFrame || v.lastFrame || v.sceneRefFrame);
+  });
 
   const textProvider = resolveAIProvider(modelConfig);
   const refVideoSystem = await resolvePrompt("ref_video_prompt", { userId, projectId });
@@ -245,7 +265,10 @@ export async function handleBatchVideoPrompt(
         // Keyframe: first + last frames. Reference: ALL scene reference frames (ordered).
   const visionFrames: string[] = [];
   let sceneMetaList: Array<{ sceneName?: string } | null> = [];
-        if (batchGenMode === "reference") {
+        if (batchGenMode === "4grid") {
+          visionFrames.push(...getPanelFrames(shotLegacy!));
+          sceneMetaList = visionFrames.map(() => null);
+        } else if (batchGenMode === "reference") {
           const sceneAssets = (shotLegacy?.referenceImages ?? [])
             .filter((r) => r.fileUrl)
             .sort((a, b) => a.sequenceInType - b.sequenceInType);
@@ -297,10 +320,12 @@ export async function handleBatchVideoPrompt(
           index: i + 1,
           visualHint: c.visualHint,
         }));
-        const sceneFrameInfos = visionFrames.map((_, i) => {
-          const name = sceneMetaList[i]?.sceneName || (visionFrames.length > 1 ? `场景-${i + 1}` : `场景`);
-          return { label: name, index: batchCharsWithRefs.length + i + 1 };
-        });
+        const sceneFrameInfos = batchGenMode === "4grid"
+          ? getPanelFrameInfos(visionFrames.length, batchCharsWithRefs.length)
+          : visionFrames.map((_, i) => {
+              const name = sceneMetaList[i]?.sceneName || (visionFrames.length > 1 ? `场景-${i + 1}` : `场景`);
+              return { label: name, index: batchCharsWithRefs.length + i + 1 };
+            });
         const promptRequest = buildRefVideoPromptRequest({
           motionScript: motionContext,
           cameraDirection: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,

@@ -348,8 +348,8 @@ export async function loadShotLegacyView(shotId: string): Promise<ShotLegacyView
   return {
     firstFrame: firstFrameAsset?.fileUrl ?? null,
     lastFrame: lastFrameAsset?.fileUrl ?? null,
-    startFrameDesc: firstFrameAsset?.prompt ?? null,
-    endFrameDesc: lastFrameAsset?.prompt ?? null,
+    startFrameDesc: firstFrameAsset?.prompt ?? panelAssets[0]?.prompt ?? null,
+    endFrameDesc: lastFrameAsset?.prompt ?? panelAssets[3]?.prompt ?? null,
     videoUrl: keyframeVideoAsset?.fileUrl ?? null,
     referenceVideoUrl: referenceVideoAsset?.fileUrl ?? null,
     sceneRefFrame: sceneRefAsset?.fileUrl ?? null,
@@ -404,8 +404,8 @@ export async function loadShotLegacyViewsBatch(
     result.set(shotId, {
       firstFrame: firstFrameAsset?.fileUrl ?? null,
       lastFrame: lastFrameAsset?.fileUrl ?? null,
-      startFrameDesc: firstFrameAsset?.prompt ?? null,
-      endFrameDesc: lastFrameAsset?.prompt ?? null,
+      startFrameDesc: firstFrameAsset?.prompt ?? panelAssets[0]?.prompt ?? null,
+      endFrameDesc: lastFrameAsset?.prompt ?? panelAssets[3]?.prompt ?? null,
       videoUrl: keyframeVideoAsset?.fileUrl ?? null,
       referenceVideoUrl: referenceVideoAsset?.fileUrl ?? null,
       sceneRefFrame: sceneRefAsset?.fileUrl ?? null,

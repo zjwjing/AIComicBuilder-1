@@ -8,6 +8,7 @@ import {
   getReferenceVideoUrl,
   getSceneRefFrameUrl,
   getFirstFrameUrl,
+  getPanelUrl,
 } from "@/stores/project-store";
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "next-intl";
@@ -45,19 +46,18 @@ export default function EpisodePreviewPage() {
 
   const finalVideoUrl = project?.finalVideoUrl ?? null;
   const generationMode = project?.generationMode ?? "keyframe";
+  type PreviewMode = "keyframe" | "reference" | "4grid";
 
   // Which mode's videos to preview — default to the project's generationMode
   const hasKeyframeVideos = project?.shots.some((s) => getKeyframeVideoUrl(s)) ?? false;
   const hasReferenceVideos = project?.shots.some((s) => getReferenceVideoUrl(s)) ?? false;
-  const hasBothModes = hasKeyframeVideos && hasReferenceVideos;
+  const hasBothModes = (hasKeyframeVideos && hasReferenceVideos) || generationMode === "4grid";
 
-  const [previewMode, setPreviewMode] = useState<"keyframe" | "reference">(
-    generationMode === "4grid" ? "keyframe" : generationMode,
-  );
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(generationMode);
 
   // Sync previewMode when project loads
   useEffect(() => {
-    if (project) setPreviewMode(project.generationMode === "4grid" ? "keyframe" : (project.generationMode ?? "keyframe"));
+    if (project) setPreviewMode(project.generationMode ?? "keyframe");
   }, [project?.generationMode]);
 
   // Check if final video file actually exists
@@ -76,7 +76,11 @@ export default function EpisodePreviewPage() {
     previewMode === "reference" ? getReferenceVideoUrl(shot) : getKeyframeVideoUrl(shot);
 
   const getThumbnail = (shot: typeof project.shots[0]) =>
-    previewMode === "reference" ? getSceneRefFrameUrl(shot) : getFirstFrameUrl(shot);
+    previewMode === "reference"
+      ? getSceneRefFrameUrl(shot)
+      : previewMode === "4grid"
+        ? getPanelUrl(shot, 1) || getPanelUrl(shot, 2) || getPanelUrl(shot, 3) || getPanelUrl(shot, 4)
+        : getFirstFrameUrl(shot);
 
   const shotsWithVideo = project.shots.filter((s) => getVideoUrl(s));
   const completedVideos = shotsWithVideo.length;
@@ -110,7 +114,7 @@ export default function EpisodePreviewPage() {
     a.click();
   }
 
-  function handleModeSwitch(mode: "keyframe" | "reference") {
+  function handleModeSwitch(mode: PreviewMode) {
     setPreviewMode(mode);
     setSelectedShot(0);
   }
@@ -161,27 +165,29 @@ export default function EpisodePreviewPage() {
       {hasBothModes && (
         <div className="flex items-center gap-1 rounded-xl border border-[--border-subtle] bg-[--surface] p-1 w-fit">
           <button
-            onClick={() => handleModeSwitch("keyframe")}
+            onClick={() => handleModeSwitch(generationMode === "4grid" ? "4grid" : "keyframe")}
             className={cn(
               "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150",
-              previewMode === "keyframe"
+              previewMode === "keyframe" || previewMode === "4grid"
                 ? "bg-white text-primary shadow ring-1 ring-primary/20"
                 : "text-[--text-muted] hover:bg-white/60 hover:text-[--text-secondary]"
             )}
           >
-            {t("project.generationModeKeyframe")}
+            {generationMode === "4grid" ? t("project.generationMode4Grid") : t("project.generationModeKeyframe")}
           </button>
-          <button
-            onClick={() => handleModeSwitch("reference")}
-            className={cn(
-              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150",
-              previewMode === "reference"
-                ? "bg-white text-primary shadow ring-1 ring-primary/20"
-                : "text-[--text-muted] hover:bg-white/60 hover:text-[--text-secondary]"
-            )}
-          >
-            {t("project.generationModeReference")}
-          </button>
+          {hasReferenceVideos && (
+            <button
+              onClick={() => handleModeSwitch("reference")}
+              className={cn(
+                "rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-150",
+                previewMode === "reference"
+                  ? "bg-white text-primary shadow ring-1 ring-primary/20"
+                  : "text-[--text-muted] hover:bg-white/60 hover:text-[--text-secondary]"
+              )}
+            >
+              {t("project.generationModeReference")}
+            </button>
+          )}
         </div>
       )}
 

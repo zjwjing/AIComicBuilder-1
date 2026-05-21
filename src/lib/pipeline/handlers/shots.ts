@@ -21,7 +21,26 @@ import {
   getActiveAsset,
   insertAssetVersion,
   patchAsset,
+  type ShotAssetType,
 } from "@/lib/shot-asset-utils";
+
+async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
+  if (episodeId) {
+    const [episode] = await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
+    if (episode?.mode) return episode.mode;
+  }
+  const [project] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
+  return project?.mode ?? "keyframe";
+}
+
+async function upsertPromptAsset(shotId: string, type: ShotAssetType, prompt: string) {
+  const existing = await getActiveAsset(shotId, type, 0);
+  if (existing) {
+    await patchAsset(existing.id, { prompt });
+  } else {
+    await insertAssetVersion({ shotId, type, sequenceInType: 0, prompt, status: "pending" });
+  }
+}
 
 type ParsedShot = {
   sequence: number;
@@ -529,6 +548,7 @@ export async function handleSingleShotRewrite(
   const shotView = await loadShotLegacyView(shot.id);
 
   const shotEpisodeId = episodeId || shot.episodeId;
+  const generationMode = await resolveGenerationMode(projectId, shotEpisodeId);
   const projectCharacters = await getEpisodeCharacters(projectId, shotEpisodeId);
   const characterDescriptions = projectCharacters
     .map((c) => `${c.name}: ${c.description}`)
@@ -592,27 +612,10 @@ IMPORTANT: Keep the same scene, characters, and narrative intent. Only rephrase 
         cameraDirection: parsed.cameraDirection,
       })
       .where(eq(shots.id, shotId));
-    // Update first/last frame prompts in shot_assets
-    {
-      const ff = await getActiveAsset(shotId, "first_frame", 0);
-      if (ff) {
-        await patchAsset(ff.id, { prompt: parsed.startFrameDesc });
-      } else {
-        await insertAssetVersion({
-          shotId, type: "first_frame", sequenceInType: 0,
-          prompt: parsed.startFrameDesc, status: "pending",
-        });
-      }
-      const lf = await getActiveAsset(shotId, "last_frame", 0);
-      if (lf) {
-        await patchAsset(lf.id, { prompt: parsed.endFrameDesc });
-      } else {
-        await insertAssetVersion({
-          shotId, type: "last_frame", sequenceInType: 0,
-          prompt: parsed.endFrameDesc, status: "pending",
-        });
-      }
-    }
+    const startType = generationMode === "4grid" ? "panel_1" : "first_frame";
+    const endType = generationMode === "4grid" ? "panel_4" : "last_frame";
+    await upsertPromptAsset(shotId, startType, parsed.startFrameDesc);
+    await upsertPromptAsset(shotId, endType, parsed.endFrameDesc);
 
     return NextResponse.json({ shotId, status: "ok", ...parsed });
   } catch (err) {

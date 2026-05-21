@@ -21,7 +21,12 @@ import {
   loadShotLegacyView,
   loadShotLegacyViewsBatch,
   insertAssetVersion,
+  type ShotLegacyView,
 } from "@/lib/shot-asset-utils";
+
+function getPanelFrames(view: ShotLegacyView): string[] {
+  return view.panels.filter((p): p is string => !!p);
+}
 
 async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
   if (episodeId) {
@@ -193,9 +198,13 @@ export async function handleBatchVideoGenerate(
 
   const overwrite = payload?.overwrite === true;
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
+  const batchGenMode = await resolveGenerationMode(projectId, episodeId);
+  const is4Grid = batchGenMode === "4grid";
   const eligible = allShots.filter((s) => {
     const v = allShotsLegacy.get(s.id);
-    return v?.firstFrame && v?.lastFrame && (overwrite || !v?.videoUrl);
+    if (!v || (!overwrite && v.videoUrl)) return false;
+    if (is4Grid) return getPanelFrames(v).length === 4;
+    return !!(v.firstFrame && v.lastFrame);
   });
   if (eligible.length === 0) {
     return NextResponse.json({ results: [], message: "No eligible shots" });
@@ -203,7 +212,6 @@ export async function handleBatchVideoGenerate(
 
   const batchCharacters = await getEpisodeCharacters(projectId, episodeId);
 
-  const is4Grid = modelConfig?.video?.modelId === "ltx-4grid";
   const videoProvider = resolveVideoProvider(modelConfig, versionedUploadDir);
   const requestedRatio = (payload?.ratio as string) || DEFAULT_ASPECT_RATIO;
   const ratio = isComfyUIVideoModel(modelConfig?.video)
@@ -253,9 +261,9 @@ export async function handleBatchVideoGenerate(
         const videoPrompt = is4Grid
           ? await enhanceVideoPrompt(
               `[FOUR-PANEL GRID STORYBOARD]
-PANEL 1 (开场): ${shotLegacy?.startFrameDesc || videoScript}
-PANEL 2 (发展): ${shotLegacy?.startFrameDesc ? "Scene progresses: " + videoScript : videoScript} — camera transition continues
-PANEL 3 (转折): Story escalates — ${videoScript}
+PANEL 1 (开场): ${shotLegacy?.startFrameDesc || shot.prompt || videoScript}
+PANEL 2 (发展): ${shot.motionScript || videoScript}
+PANEL 3 (转折): ${shot.prompt || videoScript}
 PANEL 4 (收束): ${shotLegacy?.endFrameDesc || videoScript}
 
 Scene context: ${videoScript}
@@ -271,18 +279,13 @@ Style: cinematic sequential storytelling, consistent characters and lighting acr
           .set({ status: "generating" })
           .where(eq(shots.id, shot.id));
 
-        const fourGridRefs = is4Grid
-          ? [
-              shotLegacy!.firstFrame!,
-              shotLegacy!.sceneRefFrame || shotLegacy!.firstFrame!,
-              shotLegacy!.lastFrame!,
-              shotLegacy!.sceneRefFrame || shotLegacy!.lastFrame!,
-            ]
-          : undefined;
+        const fourGridRefs = is4Grid ? getPanelFrames(shotLegacy!) : undefined;
 
         const result = await videoProvider.generateVideo({
-          firstFrame: shotLegacy!.firstFrame!,
-          lastFrame: shotLegacy!.lastFrame!,
+          ...(is4Grid
+            ? { initialImage: fourGridRefs![0], firstFrame: undefined, lastFrame: undefined }
+            : { firstFrame: shotLegacy!.firstFrame!, lastFrame: shotLegacy!.lastFrame! }
+          ),
           prompt: videoPrompt,
           duration: effectiveDuration,
           ratio,
