@@ -4,19 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { id as genId } from "@/lib/id";
 
-type ResponseOutputItem = {
-  type?: string;
-  result?: string;
-  url?: string;
-  image_url?: string;
-  content?: Array<{
-    type?: string;
-    text?: string;
-    image_url?: string;
-    result?: string;
-  }>;
-};
-
 function toErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   return err.message;
@@ -125,25 +112,6 @@ export class OpenAIProvider implements AIProvider {
     return this.saveImageBuffer(buffer, ext);
   }
 
-  private extractResponseImageOutput(resp: unknown): { base64?: string; url?: string } {
-    const output = (resp as { output?: ResponseOutputItem[] })?.output;
-    if (!Array.isArray(output)) return {};
-
-    for (const item of output) {
-      if (item.result) return { base64: item.result };
-      if (item.url) return { url: item.url };
-      if (item.image_url) return { url: item.image_url };
-      if (Array.isArray(item.content)) {
-        for (const part of item.content) {
-          if (part.result) return { base64: part.result };
-          if (part.image_url) return { url: part.image_url };
-        }
-      }
-    }
-
-    return {};
-  }
-
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
     const maxAttempts = this.isNvidia ? 5 : 1;
     let lastErr: unknown;
@@ -246,28 +214,28 @@ export class OpenAIProvider implements AIProvider {
       }
     }
 
-    // gpt-image-2: use Responses API with image_generation tool
+    // gpt-image-2: use standard Image API (/v1/images/generations)
     if (model === "gpt-image-2") {
-      const responseModel = process.env.IMAGEGEN_RESPONSE_MODEL || "gpt-5.4";
       let lastError: unknown;
 
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const resp = await this.imageClient.responses.create({
-            model: responseModel,
-            input: prompt,
-            tools: [{ type: "image_generation", output_format: "png" }],
+          const resp = await this.imageClient.images.generate({
+            model,
+            prompt,
+            n: 1,
+            response_format: "b64_json",
           });
 
-          const extracted = this.extractResponseImageOutput(resp);
-          if (extracted.base64) {
-            return this.saveImageBuffer(Buffer.from(extracted.base64, "base64"), "png");
+          const data = resp.data?.[0];
+          if (data?.b64_json) {
+            return this.saveImageBuffer(Buffer.from(data.b64_json, "base64"), "png");
           }
-          if (extracted.url) {
-            return await this.fetchImageToFile(extracted.url);
+          if (data?.url) {
+            return await this.fetchImageToFile(data.url);
           }
 
-          throw new Error(`No image data returned from Responses API: ${JSON.stringify(resp)}`);
+          throw new Error(`No image data returned from images/generations: ${JSON.stringify(resp)}`);
         } catch (err) {
           lastError = err;
           console.error(`[OpenAIProvider:gpt-image-2] attempt ${attempt} failed: ${toErrorMessage(err)}`);

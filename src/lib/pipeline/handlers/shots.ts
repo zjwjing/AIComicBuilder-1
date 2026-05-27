@@ -9,6 +9,7 @@ import {
   findBoundAgent,
   callAndValidateAgent,
   getEpisodeCharacters,
+  resolveGenerationMode,
   extractErrorMessage,
   logDetailedError,
   summarizeProviderConfig,
@@ -23,15 +24,6 @@ import {
   patchAsset,
   type ShotAssetType,
 } from "@/lib/shot-asset-utils";
-
-async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
-  if (episodeId) {
-    const [episode] = await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
-    if (episode?.mode) return episode.mode;
-  }
-  const [project] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-  return project?.mode ?? "keyframe";
-}
 
 async function upsertPromptAsset(shotId: string, type: ShotAssetType, prompt: string) {
   const existing = await getActiveAsset(shotId, type, 0);

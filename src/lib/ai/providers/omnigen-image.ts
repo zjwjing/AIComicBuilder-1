@@ -63,9 +63,9 @@ export class OmnigenImageProvider implements AIProvider {
     prompt: string,
     options?: ImageOptions,
   ): string {
-    const refs = options?.referenceImages ?? [];
-    const labels = options?.referenceLabels ?? [];
-    const roles = options?.referenceRoles ?? [];
+    const refs = (options?.referenceImages ?? []).slice(0, 6);
+    const labels = (options?.referenceLabels ?? []).slice(0, 6);
+    const roles = (options?.referenceRoles ?? []).slice(0, 6);
 
     // No references — pure txt2img
     if (refs.length === 0) return prompt;

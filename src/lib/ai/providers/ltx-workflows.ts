@@ -19,6 +19,10 @@ const SIGMA_PRESETS: Record<SigmaPreset, { main: string; refiner: string }> = {
     main: "1.0, 0.996875, 0.99375, 0.990625, 0.9875, 0.984375, 0.98125, 0.978125, 0.975, 0.9375, 0.909375, 0.84375, 0.725, 0.574219, 0.421875, 0.253906, 0.0",
     refiner: "0.85, 0.75, 0.574219, 0.4219, 0.253906, 0.0",
   },
+  quality_lite: {
+    main: "1.0, 0.996875, 0.99375, 0.9875, 0.98125, 0.975, 0.9375, 0.909375, 0.84375, 0.725, 0.574219, 0.421875, 0.0",
+    refiner: "0.85, 0.7250, 0.574219, 0.4219, 0.0",
+  },
 };
 
 export function getSigmaSchedules(preset?: SigmaPreset): { main: string; refiner: string } {

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { ProviderConfig } from "@/lib/ai/ai-sdk";
 import { db } from "@/lib/db";
-import { characters, storyboardVersions, episodeCharacters, agentBindings, agents } from "@/lib/db/schema";
+import { characters, storyboardVersions, episodeCharacters, agentBindings, agents, episodes, projects } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_CHARACTER_IMAGE_SIZE } from "@/lib/config/defaults";
 import { callAgent, validateAgentOutput, type AgentCategory } from "@/lib/ai/agent-caller";
@@ -17,6 +17,15 @@ export interface StoryboardEditReference {
   role: string;
   path: string;
   label?: string;
+}
+
+export async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
+  if (episodeId) {
+    const [ep] = await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
+    if (ep?.mode) return ep.mode;
+  }
+  const [proj] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
+  return proj?.mode ?? "keyframe";
 }
 
 /** Wrap agent call + validation, returning user-friendly error response on failure */

@@ -182,8 +182,10 @@ export function createVideoProvider(config: ProviderConfig, uploadDir?: string):
   }
 }
 
+const TEXT_CAPABLE_PROTOCOLS = new Set(["openai", "gemini", "nvidia"]);
+
 export function resolveAIProvider(modelConfig?: ModelConfigPayload): AIProvider {
-  if (modelConfig?.text) {
+  if (modelConfig?.text && TEXT_CAPABLE_PROTOCOLS.has(modelConfig.text.protocol)) {
     return createAIProvider(modelConfig.text);
   }
   return getAIProvider();

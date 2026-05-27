@@ -237,7 +237,7 @@ interface ProjectStore {
   project: Project | null;
   loading: boolean;
   currentEpisodeId: string | null;
-  fetchProject: (id: string, episodeId?: string, versionId?: string) => Promise<void>;
+  fetchProject: (id: string, episodeId?: string, versionId?: string, excludeShots?: boolean) => Promise<void>;
   updateIdea: (idea: string) => void;
   updateScript: (script: string) => void;
   setProject: (project: Project) => void;
@@ -248,16 +248,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   loading: false,
   currentEpisodeId: null,
 
-  fetchProject: async (id: string, episodeId?: string, versionId?: string) => {
+  fetchProject: async (id: string, episodeId?: string, versionId?: string, excludeShots?: boolean) => {
     // Only show loading spinner on initial load (no project yet).
     // Version switches are background refreshes — don't unmount children.
     if (!get().project) set({ loading: true });
 
+    const params = new URLSearchParams();
+    if (versionId) params.set("versionId", versionId);
+    if (excludeShots) params.set("exclude", "shots");
+    const query = params.toString();
+
     let url: string;
     if (episodeId) {
-      url = `/api/projects/${id}/episodes/${episodeId}${versionId ? `?versionId=${versionId}` : ""}`;
+      url = `/api/projects/${id}/episodes/${episodeId}${query ? `?${query}` : ""}`;
     } else {
-      url = `/api/projects/${id}${versionId ? `?versionId=${versionId}` : ""}`;
+      url = `/api/projects/${id}${query ? `?${query}` : ""}`;
     }
 
     const res = await apiFetch(url);

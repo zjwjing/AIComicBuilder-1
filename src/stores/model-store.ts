@@ -45,7 +45,7 @@ function migrateLegacySenseNovaProvider(input: Record<string, unknown>) {
   });
 
   if (protocol === "openai" && baseUrl.includes("token.sensenova.cn") && hasSenseNovaU1) {
-    return { ...input, protocol: "sensenova" };
+    return { ...input, protocol: "sensenova", capability: "image" };
   }
 
   return input;

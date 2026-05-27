@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { DEFAULT_SHOT_DURATION, DEFAULT_CAMERA_DIRECTION } from "@/lib/config/defaults";
-import { projects, episodes, shots, characters, dialogues } from "@/lib/db/schema";
+import { shots, characters, dialogues } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -10,6 +10,7 @@ import {
   getEpisodeCharacters,
   findBoundAgent,
   callAndValidateAgent,
+  resolveGenerationMode,
 } from "@/lib/generate-utils";
 import { getModelMaxDuration } from "@/lib/ai/model-limits";
 import { extractJSON } from "@/lib/ai/ai-sdk";
@@ -18,6 +19,7 @@ import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildRefVideoPromptRequest } from "@/lib/ai/prompts/ref-video-prompt-generate";
 import { loadShotLegacyView, loadShotLegacyViewsBatch, type ShotLegacyView } from "@/lib/shot-asset-utils";
 import type { AgentCategory } from "@/lib/ai/agent-caller";
+import { diagnosticError } from "@/lib/pipeline/diagnostics";
 
 function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
@@ -40,21 +42,23 @@ export async function handleSingleVideoPrompt(
 ) {
   const shotId = payload?.shotId as string;
   console.log(`[SingleVideoPrompt] called, shotId=${shotId}`);
-  if (!shotId) return NextResponse.json({ error: "shotId required" }, { status: 400 });
+  if (!shotId) {
+    return NextResponse.json(
+      diagnosticError("PIPE_001", "shotId required", "Pass payload.shotId when calling single video prompt generation."),
+      { status: 400 },
+    );
+  }
 
   const [shot] = await db.select().from(shots).where(eq(shots.id, shotId)).limit(1);
-  if (!shot) return NextResponse.json({ error: "Shot not found" }, { status: 404 });
+  if (!shot) {
+    return NextResponse.json(
+      diagnosticError("PIPE_003", "Shot not found", "Verify the shotId belongs to the current project/version."),
+      { status: 404 },
+    );
+  }
   const shotView = await loadShotLegacyView(shot.id);
 
-  // Determine generation mode to decide which frames to pass
-  let genMode = "keyframe";
-  if (shot.episodeId) {
-    const [ep] = await db.select({ generationMode: episodes.generationMode }).from(episodes).where(eq(episodes.id, shot.episodeId));
-    genMode = ep?.generationMode ?? "keyframe";
-  } else {
-    const [proj] = await db.select({ generationMode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-    genMode = proj?.generationMode ?? "keyframe";
-  }
+  const genMode = await resolveGenerationMode(projectId, shot.episodeId);
 
   // Keyframe mode: pass first + last frames for transition description
   // Reference mode: pass ALL scene reference frames (ordered) so multi-
@@ -83,7 +87,10 @@ export async function handleSingleVideoPrompt(
   }
   console.log(`[SingleVideoPrompt] shot.sequence=${shot.sequence}, mode=${genMode}, frames=${visionFrames.length}`);
   if (visionFrames.length === 0) {
-    return NextResponse.json({ error: "No frame available. Generate frames first." }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_004", "No frame available. Generate frames first.", "Generate the required frame assets for the current generation mode before video prompt generation."),
+      { status: 400 },
+    );
   }
 
   const shotCharacters = await db.select().from(characters).where(eq(characters.projectId, shot.projectId));
@@ -152,7 +159,17 @@ export async function handleSingleVideoPrompt(
     return NextResponse.json({ shotId, videoPrompt, status: "ok" });
   } catch (err) {
     console.error("[SingleVideoPrompt] Error:", err);
-    return NextResponse.json({ status: "error", error: extractErrorMessage(err) }, { status: 500 });
+    return NextResponse.json(
+      {
+        status: "error",
+        ...diagnosticError(
+          "PIPE_006",
+          extractErrorMessage(err),
+          "Inspect the text provider response and retry after fixing the upstream prompt or model issue.",
+        ),
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -165,10 +182,8 @@ export async function handleBatchVideoPrompt(
 ) {
   // === 智能体路由 ===
   // Check generation mode to decide which agent category to use
-  const vpModeSource = episodeId
-    ? await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId))
-    : await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-  const vpCategory: AgentCategory = vpModeSource[0]?.mode === "reference" ? "ref_video_prompts" : "video_prompts";
+  const vpGenMode = await resolveGenerationMode(projectId, episodeId);
+  const vpCategory: AgentCategory = vpGenMode === "reference" ? "ref_video_prompts" : "video_prompts";
   const vpBoundAgent = await findBoundAgent(projectId, vpCategory);
   if (vpBoundAgent) {
     // Build prompt from shots data (same info as built-in pipeline)
@@ -178,7 +193,10 @@ export async function handleBatchVideoPrompt(
     if (episodeId) vpWhereConds.push(eq(shots.episodeId, episodeId));
     const vpAgentShots = await db.select().from(shots).where(and(...vpWhereConds)).orderBy(asc(shots.sequence));
     if (vpAgentShots.length === 0) {
-      return NextResponse.json({ error: "没有分镜数据，请先生成分镜" }, { status: 400 });
+      return NextResponse.json(
+        diagnosticError("PIPE_007", "没有分镜数据，请先生成分镜", "先生成或导入 shots，再批量生成视频提示词。"),
+        { status: 400 },
+      );
     }
     const vpAgentChars = await getEpisodeCharacters(projectId, episodeId);
     const vpPrompt = JSON.stringify({
@@ -215,7 +233,10 @@ export async function handleBatchVideoPrompt(
       return NextResponse.json({ results: vpParsed.map((e) => ({ shotId: e.sequence, status: "ok" })), status: "ok" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `智能体视频提示词解析失败: ${msg}` }, { status: 422 });
+      return NextResponse.json(
+        diagnosticError("PIPE_010", `智能体视频提示词解析失败: ${msg}`, "检查智能体输出是否为合法 JSON 数组，并重试该批任务。"),
+        { status: 422 },
+      );
     }
   }
   // === 智能体路由结束 ===
@@ -231,14 +252,7 @@ export async function handleBatchVideoPrompt(
   const batchCharacters = await getEpisodeCharacters(projectId, episodeId);
 
   // Determine generation mode for frame selection
-  let batchGenMode = "keyframe";
-  if (episodeId) {
-    const [ep] = await db.select({ generationMode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
-    batchGenMode = ep?.generationMode ?? "keyframe";
-  } else {
-    const [proj] = await db.select({ generationMode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-    batchGenMode = proj?.generationMode ?? "keyframe";
-  }
+  const batchGenMode = await resolveGenerationMode(projectId, episodeId);
 
   // Only process shots that have the frame assets required by the active mode.
   const eligible = batchShots.filter((s) => {
@@ -344,7 +358,17 @@ export async function handleBatchVideoPrompt(
         return { shotId: shot.id, status: "ok" };
       } catch (err) {
         console.error(`[BatchVideoPrompt] Shot ${shot.sequence} failed:`, err);
-        return { shotId: shot.id, status: "error" };
+        return {
+          shotId: shot.id,
+          status: "error",
+          error: extractErrorMessage(err),
+          diagnostic: {
+            code: "PIPE_006",
+            severity: "error" as const,
+            message: extractErrorMessage(err),
+            fix: "Inspect the text provider response and retry the failed shot after the upstream issue is resolved.",
+          },
+        };
       }
     })
   );

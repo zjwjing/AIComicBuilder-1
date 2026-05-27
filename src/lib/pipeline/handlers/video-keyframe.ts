@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { shots, characters, dialogues, episodes, projects } from "@/lib/db/schema";
+import { shots, characters, dialogues } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
   type ModelConfig,
   getVersionedUploadDir,
+  resolveGenerationMode,
   extractErrorMessage,
   isCharacterOnScreen,
   getEpisodeCharacters,
@@ -23,18 +24,41 @@ import {
   insertAssetVersion,
   type ShotLegacyView,
 } from "@/lib/shot-asset-utils";
+import { diagnosticError } from "@/lib/pipeline/diagnostics";
+import { execSync } from "node:child_process";
 
 function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
 }
 
-async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
-  if (episodeId) {
-    const [ep] = await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
-    if (ep?.mode) return ep.mode;
+async function build4GridPrompt(slotKey: string, userId: string, projectId: string, replacements: Record<string, string>): Promise<string> {
+  try {
+    const slots = await resolveSlotContents(slotKey, { userId, projectId });
+    const template = slots["structure_template"];
+    if (template) {
+      let result = template;
+      for (const [key, val] of Object.entries(replacements)) {
+        result = result.replaceAll(`{{${key}}}`, val);
+      }
+      return result;
+    }
+  } catch {
+    // fall through to hardcoded default
   }
-  const [proj] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-  return proj?.mode ?? "keyframe";
+  const p1 = replacements["PANEL1_DESC"] ?? "";
+  const p2 = replacements["PANEL2_DESC"] ?? "";
+  const p3 = replacements["PANEL3_DESC"] ?? "";
+  const p4 = replacements["PANEL4_DESC"] ?? "";
+  return `[FOUR-PANEL GRID STORYBOARD]
+PANEL 1 (开场): ${p1}
+PANEL 2 (发展): ${p2}
+PANEL 3 (转折): ${p3}
+PANEL 4 (收束): ${p4}
+
+Scene context: ${replacements["SCENE_CONTEXT"] ?? ""}
+Camera direction: ${replacements["CAMERA_DIRECTION"] ?? ""}
+Duration: ${replacements["DURATION"] ?? ""} seconds
+Style: cinematic sequential storytelling, consistent characters and lighting across all panels`;
 }
 
 export async function handleSingleVideoGenerate(
@@ -46,22 +70,34 @@ export async function handleSingleVideoGenerate(
 ) {
   const shotId = payload?.shotId as string;
   if (!shotId) {
-    return NextResponse.json({ error: "No shotId provided" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_001", "No shotId provided", "Pass payload.shotId when calling single video generation."),
+      { status: 400 },
+    );
   }
   if (!modelConfig?.video) {
-    return NextResponse.json({ error: "No video model configured" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_002", "No video model configured", "Configure modelConfig.video before generating videos."),
+      { status: 400 },
+    );
   }
 
   const [shot] = await db.select().from(shots).where(eq(shots.id, shotId));
   if (!shot) {
-    return NextResponse.json({ error: "Shot not found" }, { status: 404 });
+    return NextResponse.json(
+      diagnosticError("PIPE_003", "Shot not found", "Verify the shotId belongs to the current project/version."),
+      { status: 404 },
+    );
   }
   const shotView = await loadShotLegacyView(shot.id);
   const genMode = await resolveGenerationMode(projectId, shot.episodeId);
   const is4Grid = genMode === "4grid";
 
   if (!is4Grid && (!shotView.firstFrame || !shotView.lastFrame)) {
-    return NextResponse.json({ error: "Shot frames not generated yet" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_004", "Shot frames not generated yet", "Generate first and last frames before video generation."),
+      { status: 400 },
+    );
   }
 
   const versionedUploadDir = await getVersionedUploadDir(shot.versionId);
@@ -120,16 +156,17 @@ export async function handleSingleVideoGenerate(
 
     const videoPrompt = is4Grid
       ? await enhanceVideoPrompt(
-          `[FOUR-PANEL GRID STORYBOARD]
-PANEL 1 (开场): ${shotView.startFrameDesc || shot.prompt || videoScript}
-PANEL 2 (发展): ${shot.motionScript || videoScript}
-PANEL 3 (转折): ${shot.prompt || videoScript}
-PANEL 4 (收束): ${shotView.endFrameDesc || videoScript}
-
-Scene context: ${videoScript}
-Camera direction: ${shot.cameraDirection || DEFAULT_CAMERA_DIRECTION}
-Duration: ${effectiveDuration} seconds
-Style: cinematic sequential storytelling, consistent characters and lighting across all panels`,
+          await build4GridPrompt("video_generate_4grid", userId, projectId, {
+            PANEL1_DESC: shotView.startFrameDesc || shot.prompt || videoScript,
+            PANEL2_DESC: shot.motionScript || videoScript,
+            PANEL3_DESC: shot.prompt || videoScript,
+            PANEL4_DESC: shotView.endFrameDesc || videoScript,
+            SCENE_CONTEXT: videoScript,
+            CAMERA_DIRECTION: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
+            DURATION: String(effectiveDuration),
+            SHOT_CHARACTERS: shotCharacters.map((c) => c.name).join(", "),
+            DIALOGUES: dialogueList.length > 0 ? dialogueList.map((d) => `${d.characterName}: "${d.text}"`).join("\n") : "",
+          }),
           modelConfig,
         )
       : await enhanceVideoPrompt(basePrompt, modelConfig);
@@ -139,7 +176,10 @@ Style: cinematic sequential storytelling, consistent characters and lighting acr
       : undefined;
 
     if (is4Grid && (!fourGridRefs || fourGridRefs.length < 4)) {
-      return NextResponse.json({ error: "4-grid requires all 4 panel images. Upload panel images first." }, { status: 400 });
+      return NextResponse.json(
+        diagnosticError("PIPE_005", "4-grid requires all 4 panel images. Upload panel images first.", "Generate or upload panel_1 to panel_4 before 4-grid video generation."),
+        { status: 400 },
+      );
     }
 
     const result = await videoProvider.generateVideo({
@@ -153,9 +193,33 @@ Style: cinematic sequential storytelling, consistent characters and lighting acr
       ...(fourGridRefs ? { referenceImages: fourGridRefs } : {}),
     });
 
+    // Trim tail-end panel flash for 4-grid videos
+    let videoPath = result.filePath;
+    if (is4Grid && videoPath) {
+      try {
+        const duration = execSync(
+          `ffprobe -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`,
+          { timeout: 10000, encoding: "utf-8" },
+        ).trim();
+        const dur = parseFloat(duration);
+        if (dur > 2) {
+          const trimmed = videoPath.replace(/\.mp4$/, "_trimmed.mp4");
+          execSync(
+            `ffmpeg -i "${videoPath}" -t ${dur - 1.5} -c copy -y "${trimmed}"`,
+            { timeout: 30000, stdio: "ignore" },
+          );
+          videoPath = trimmed;
+        }
+      } catch (e) {
+        console.warn("[SingleVideoGenerate] Trim failed, using original:", e);
+      }
+    }
+
+    await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shotId));
+
     await insertAssetVersion({
       shotId, type: "keyframe_video", sequenceInType: 0,
-      prompt: videoPrompt, fileUrl: result.filePath, status: "completed",
+      prompt: videoPrompt, fileUrl: videoPath, status: "completed",
     });
 
     await db
@@ -163,11 +227,22 @@ Style: cinematic sequential storytelling, consistent characters and lighting acr
       .set({ status: "completed" })
       .where(eq(shots.id, shotId));
 
-    return NextResponse.json({ shotId, videoUrl: result.filePath, status: "ok" });
+    return NextResponse.json({ shotId, videoUrl: videoPath, status: "ok" });
   } catch (err) {
     console.error(`[SingleVideoGenerate] Error for shot ${shotId}:`, err);
     await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shotId));
-    return NextResponse.json({ shotId, status: "error", error: extractErrorMessage(err) }, { status: 500 });
+    return NextResponse.json(
+      {
+        shotId,
+        status: "error",
+        ...diagnosticError(
+          "PIPE_006",
+          extractErrorMessage(err),
+          "Inspect the video provider logs and retry the shot after the upstream issue is resolved.",
+        ),
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -179,7 +254,10 @@ export async function handleBatchVideoGenerate(
   episodeId?: string
 ) {
   if (!modelConfig?.video) {
-    return NextResponse.json({ error: "No video model configured" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_002", "No video model configured", "Configure modelConfig.video before generating videos."),
+      { status: 400 },
+    );
   }
 
   const batchVersionId = payload?.versionId as string | undefined;
@@ -207,7 +285,16 @@ export async function handleBatchVideoGenerate(
     return !!(v.firstFrame && v.lastFrame);
   });
   if (eligible.length === 0) {
-    return NextResponse.json({ results: [], message: "No eligible shots" });
+    return NextResponse.json({
+      results: [],
+      message: "No eligible shots",
+      diagnostic: {
+        code: "PIPE_009",
+        severity: "warning",
+        message: "No eligible shots",
+        fix: "Generate the required frame assets or enable overwrite before running batch video generation.",
+      },
+    });
   }
 
   const batchCharacters = await getEpisodeCharacters(projectId, episodeId);
@@ -220,7 +307,7 @@ export async function handleBatchVideoGenerate(
   const videoMaxDuration = getModelMaxDuration(modelConfig?.video?.modelId);
   const videoSlots = await resolveSlotContents("video_generate", { userId, projectId });
 
-  const results: Array<{ shotId: string; sequence: number; status: "ok" | "error"; videoUrl?: string; error?: string }> = [];
+  const results: Array<{ shotId: string; sequence: number; status: "ok" | "error"; videoUrl?: string; error?: string; diagnostic?: { code: string; severity: "info" | "warning" | "error"; message: string; fix: string } }> = [];
   for (const shot of eligible) {
       try {
         const shotLegacy = allShotsLegacy.get(shot.id);
@@ -260,16 +347,17 @@ export async function handleBatchVideoGenerate(
 
         const videoPrompt = is4Grid
           ? await enhanceVideoPrompt(
-              `[FOUR-PANEL GRID STORYBOARD]
-PANEL 1 (开场): ${shotLegacy?.startFrameDesc || shot.prompt || videoScript}
-PANEL 2 (发展): ${shot.motionScript || videoScript}
-PANEL 3 (转折): ${shot.prompt || videoScript}
-PANEL 4 (收束): ${shotLegacy?.endFrameDesc || videoScript}
-
-Scene context: ${videoScript}
-Camera direction: ${shot.cameraDirection || DEFAULT_CAMERA_DIRECTION}
-Duration: ${effectiveDuration} seconds
-Style: cinematic sequential storytelling, consistent characters and lighting across all panels`,
+              await build4GridPrompt("video_generate_4grid", userId, projectId, {
+                PANEL1_DESC: shotLegacy?.startFrameDesc || shot.prompt || videoScript,
+                PANEL2_DESC: shot.motionScript || videoScript,
+                PANEL3_DESC: shot.prompt || videoScript,
+                PANEL4_DESC: shotLegacy?.endFrameDesc || videoScript,
+                SCENE_CONTEXT: videoScript,
+                CAMERA_DIRECTION: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
+                DURATION: String(effectiveDuration),
+                SHOT_CHARACTERS: batchCharacters.map((c) => c.name).join(", "),
+                DIALOGUES: dialogueList.length > 0 ? dialogueList.map((d) => `${d.characterName}: "${d.text}"`).join("\n") : "",
+              }),
               modelConfig,
             )
           : await enhanceVideoPrompt(basePrompt, modelConfig);
@@ -292,9 +380,32 @@ Style: cinematic sequential storytelling, consistent characters and lighting acr
           ...(fourGridRefs ? { referenceImages: fourGridRefs } : {}),
         });
 
+        let videoPath = result.filePath;
+        if (is4Grid && videoPath) {
+          try {
+            const duration = execSync(
+              `ffprobe -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`,
+              { timeout: 10000, encoding: "utf-8" },
+            ).trim();
+            const dur = parseFloat(duration);
+            if (dur > 2) {
+              const trimmed = videoPath.replace(/\.mp4$/, "_trimmed.mp4");
+              execSync(
+                `ffmpeg -i "${videoPath}" -t ${dur - 1.5} -c copy -y "${trimmed}"`,
+                { timeout: 30000, stdio: "ignore" },
+              );
+              videoPath = trimmed;
+            }
+          } catch (e) {
+            console.warn("[BatchVideoGenerate] Trim failed, using original:", e);
+          }
+        }
+
+        await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shot.id));
+
         await insertAssetVersion({
           shotId: shot.id, type: "keyframe_video", sequenceInType: 0,
-          prompt: videoPrompt, fileUrl: result.filePath, status: "completed",
+          prompt: videoPrompt, fileUrl: videoPath, status: "completed",
         });
         await db
           .update(shots)
@@ -302,11 +413,22 @@ Style: cinematic sequential storytelling, consistent characters and lighting acr
           .where(eq(shots.id, shot.id));
 
         console.log(`[BatchVideoGenerate] Shot ${shot.sequence} completed`);
-        results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", videoUrl: result.filePath });
+        results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", videoUrl: videoPath });
       } catch (err) {
         console.error(`[BatchVideoGenerate] Error for shot ${shot.sequence}:`, err);
         await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shot.id));
-        results.push({ shotId: shot.id, sequence: shot.sequence, status: "error", error: extractErrorMessage(err) });
+        results.push({
+          shotId: shot.id,
+          sequence: shot.sequence,
+          status: "error",
+          error: extractErrorMessage(err),
+          diagnostic: {
+            code: "PIPE_006",
+            severity: "error",
+            message: extractErrorMessage(err),
+            fix: "Inspect the video provider logs and retry the failed shot after the upstream issue is resolved.",
+          },
+        });
       }
   }
 

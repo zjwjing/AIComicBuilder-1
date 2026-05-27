@@ -8,6 +8,7 @@ import {
   findBoundAgent,
   callAndValidateAgent,
   getEpisodeCharacters,
+  resolveGenerationMode,
 } from "@/lib/generate-utils";
 import { extractJSON } from "@/lib/ai/ai-sdk";
 import { resolveAIProvider } from "@/lib/ai/provider-factory";
@@ -22,6 +23,10 @@ export async function handleGenerateKeyframePrompts(
   modelConfig?: ModelConfig,
   episodeId?: string
 ) {
+  const generationMode = await resolveGenerationMode(projectId, episodeId);
+  const panelStartType = generationMode === "4grid" ? "panel_1" as const : "first_frame" as const;
+  const panelEndType = generationMode === "4grid" ? "panel_4" as const : "last_frame" as const;
+
   // === 智能体路由 ===
   const kpBoundAgent = await findBoundAgent(projectId, "keyframe_prompts");
   if (kpBoundAgent) {
@@ -67,11 +72,11 @@ export async function handleGenerateKeyframePrompts(
         const chars = Array.isArray(entry.characters) ? entry.characters as string[] : [];
 
         if (startFrame) {
-          await insertAssetVersion({ shotId: shot.id, type: "first_frame", sequenceInType: 0, prompt: startFrame, status: "pending", characters: chars });
+          await insertAssetVersion({ shotId: shot.id, type: panelStartType, sequenceInType: 0, prompt: startFrame, status: "pending", characters: chars });
           savedCount++;
         }
         if (endFrame) {
-          await insertAssetVersion({ shotId: shot.id, type: "last_frame", sequenceInType: 0, prompt: endFrame, status: "pending", characters: chars });
+          await insertAssetVersion({ shotId: shot.id, type: panelEndType, sequenceInType: 0, prompt: endFrame, status: "pending", characters: chars });
           savedCount++;
         }
       }
@@ -218,7 +223,7 @@ export async function handleGenerateKeyframePrompts(
       const charsForShot = Array.isArray(entry.characters) ? entry.characters : [];
       await insertAssetVersion({
         shotId: shot.id,
-        type: "first_frame",
+        type: panelStartType,
         sequenceInType: 0,
         prompt: entry.prompts[0],
         status: "pending",
@@ -226,7 +231,7 @@ export async function handleGenerateKeyframePrompts(
       });
       await insertAssetVersion({
         shotId: shot.id,
-        type: "last_frame",
+        type: panelEndType,
         sequenceInType: 0,
         prompt: entry.prompts[1],
         status: "pending",

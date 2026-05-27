@@ -1,7 +1,8 @@
-import type { VideoProvider, VideoGenerateParams, VideoGenerateResult, CameraControl } from "../types";
+import type { VideoProvider, VideoGenerateParams, VideoGenerateResult, CameraControl, SigmaPreset } from "../types";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
 import { id as genId } from "@/lib/id";
 import { buildLTXi2vT2vWorkflow, buildLTXFlf2vWorkflow, getSigmaSchedules, getCameraLoRAName } from "./ltx-workflows";
 
@@ -27,6 +28,68 @@ type ComfyHistoryRecord = {
   };
   outputs?: Record<string, Record<string, ComfyOutputFile[]>>;
 };
+
+function splitTimelinePrompts(prompt: string) {
+  const panelPrompts = new Map<number, string>();
+  const timeRanges = new Map<number, { start: number; end: number }>();
+
+  const panelPattern = /PANEL\s+([1-4])\s*\([^\n]*\):\s*([\s\S]*?)(?=\nPANEL\s+[1-4]\s*\(|\n\nScene context:|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = panelPattern.exec(prompt)) !== null) {
+    const index = Number(match[1]);
+    const text = match[2]?.trim();
+    if (index >= 1 && index <= 4 && text) panelPrompts.set(index, text);
+  }
+
+  const storyboardPattern = /分镜\s*([1-4])[:：]\s*([^\n]*)\((\d{2}:\d{2}(?:\.\d+)?)\s*-\s*(\d{2}:\d{2}(?:\.\d+)?)\)[\s\S]*?画面提示词[:：]\s*([\s\S]*?)(?=\n\s*>\s*🎙️|\n分镜\s*[1-4][:：]|\n3\.\s*剧本逻辑总结|$)/g;
+  while ((match = storyboardPattern.exec(prompt)) !== null) {
+    const index = Number(match[1]);
+    const text = match[5]?.trim();
+    const parseTime = (value: string) => {
+      const [mm, ss] = value.split(":");
+      return Number(mm) * 60 + Number(ss);
+    };
+    if (index >= 1 && index <= 4 && text) {
+      panelPrompts.set(index, text);
+      timeRanges.set(index, { start: parseTime(match[3]), end: parseTime(match[4]) });
+    }
+  }
+
+  const sceneContext = prompt.match(/\n\nScene context:\s*([\s\S]*?)(?=\nCamera direction:|$)/)?.[1]?.trim() || "";
+  const cameraDirection = prompt.match(/\nCamera direction:\s*([^\n]+)/)?.[1]?.trim() || "";
+  const style = prompt.match(/\nStyle:\s*([\s\S]+)$/)?.[1]?.trim() || "";
+  const masterPrompt = prompt.match(/1\.\s*总提示词[\s\S]*?中文描述[:：]\s*([\s\S]*?)(?=\n\s*2\.|$)/)?.[1]?.trim() || "";
+
+  const localPrompts = [1, 2, 3, 4]
+    .map((i) => panelPrompts.get(i) ?? "")
+    .filter(Boolean);
+
+  const segmentSeconds = [1, 2, 3, 4]
+    .map((i) => timeRanges.get(i))
+    .filter((range): range is { start: number; end: number } => Boolean(range))
+    .map((range) => Math.max(1, range.end - range.start));
+
+  const globalPrompt = [
+    masterPrompt,
+    sceneContext,
+    cameraDirection ? `Camera direction: ${cameraDirection}` : "",
+    style,
+  ].filter(Boolean).join("\n");
+
+  return { globalPrompt, localPrompts, segmentSeconds };
+}
+
+function buildManualStyleSegmentLengths(durationSec: number, fps: number, promptCount: number) {
+  if (promptCount === 4 && durationSec >= 14) {
+    return [91, 90, 90, 90];
+  }
+
+  const totalFrames = durationSec * fps;
+  const baseSegmentLen = Math.max(1, Math.floor(totalFrames / promptCount));
+  return Array.from({ length: promptCount }, (_, i) =>
+    i === promptCount - 1 ? totalFrames - baseSegmentLen * (promptCount - 1) : baseSegmentLen,
+  );
+}
 
 const COMFYUI_OUTPUT_DIR = process.env.COMFYUI_OUTPUT_DIR || "M:\\ComfyUI_windows_portable\\ComfyUI\\output";
 
@@ -112,32 +175,50 @@ export class ComfyUIVideoProvider implements VideoProvider {
     raw = raw.replaceAll("{{charImage1}}", images[1] ?? images[0]);
     raw = raw.replaceAll("{{charImage2}}", images[2] ?? images[0]);
     raw = raw.replaceAll("{{charImage3}}", images[3] ?? images[0]);
-    raw = raw.replaceAll("{{charImage4}}", images[0]);
+    raw = raw.replaceAll("{{charImage4}}", images[4] ?? images[3] ?? images[0]);
 
-    // Prompt: use single prompt (no timeline segmentation by default)
-    raw = raw.replaceAll("{{prompt}}", prompt);
-    raw = raw.replaceAll("{{localPrompts}}", prompt);
-    raw = raw.replaceAll("{{segmentLengths}}", String(Math.max(1, Math.round(durationSec * fps / 4))));
+    // Match the manual high-quality baseline workflow: length = duration * fps + 1.
+    const totalFrames = durationSec * fps + 1;
+    const { globalPrompt, localPrompts: parsedLocalPrompts, segmentSeconds } = splitTimelinePrompts(prompt);
+    const localPrompts = parsedLocalPrompts.length > 0
+      ? parsedLocalPrompts
+      : Array.from({ length: Math.min(4, images.length) }, () => globalPrompt || prompt);
+    const promptCount = Math.max(1, localPrompts.length || 1);
+    const segmentLengths = segmentSeconds.length === promptCount
+      ? segmentSeconds.map((seconds) => Math.max(1, Math.round(seconds * fps)))
+      : buildManualStyleSegmentLengths(durationSec, fps, promptCount);
+    const baseSegmentLen = segmentLengths[0] ?? Math.max(1, Math.floor(totalFrames / promptCount));
 
-    // Timeline data: single segment covering full duration
-    const totalFrames = durationSec * fps;
-    const segmentLen = Math.max(1, Math.round(totalFrames / 4));
+    const jsonEscape = (value: string) => value
+      .replace(/\\/g, "\\\\")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t")
+      .replace(/"/g, '\\"');
+
+    raw = raw.replaceAll("{{prompt}}", jsonEscape(globalPrompt || prompt));
+    raw = raw.replaceAll("{{localPrompts}}", jsonEscape(localPrompts.join(" | ")));
+    raw = raw.replaceAll("{{segmentLengths}}", segmentLengths.join(", "));
+
     const tl = {
-      segments: [
-        { prompt: "开场", length: segmentLen, color: "#4f8edc" },
-        { prompt: "发展", length: segmentLen, color: "#5cb85c" },
-        { prompt: "转折", length: segmentLen, color: "#e07b3a" },
-        { prompt: "收束", length: totalFrames - segmentLen * 3, color: "#d9534f" },
-      ],
+      segments: localPrompts.map((segmentPrompt, i) => ({
+        prompt: segmentPrompt,
+        length: segmentLengths[i] ?? baseSegmentLen,
+        color: ["#4f8edc", "#5cb85c", "#e07b3a", "#d9534f"][i] ?? "#999999",
+      })),
     };
     raw = raw.replaceAll("{{timelineData}}", JSON.stringify(tl));
     raw = raw.replaceAll("{{numGuides}}", String(Math.min(4, images.length)));
 
-    // Replace checkpoint placeholder with default path
-    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
-    raw = raw.replaceAll("CKPT_PLACEHOLDER", ckptName);
-
     const template = JSON.parse(raw) as Record<string, ComfyNode>;
+
+    // Replace CKPT_PLACEHOLDER in parsed object (avoids JSON string escaping issues with backslash paths)
+    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
+    for (const node of Object.values(template)) {
+      for (const [k, v] of Object.entries(node.inputs)) {
+        if (v === "CKPT_PLACEHOLDER") node.inputs[k] = ckptName;
+      }
+    }
     const inputs = (id: string) => template[id]?.inputs as Record<string, unknown> | undefined;
 
     const n328 = inputs("328");
@@ -153,15 +234,37 @@ export class ComfyUIVideoProvider implements VideoProvider {
 
     if (n328) n328.noise_seed = Math.floor(Math.random() * 1_000_000_000_000_000);
     if (n329) n329.noise_seed = Math.floor(Math.random() * 1_000_000_000_000_000);
-    if (n349) n349.value = 1088;
+    if (n349) n349.value = 720;
     if (n350) n350.value = fps;
     if (n351) n351.value = durationSec;
-    if (n359) n359.value = 1920;
-    if (n363) n363.value = prompt;
+    if (n359) n359.value = 1280;
+    if (n363) n363.value = `[TRACE_V2_4GRID]\n${globalPrompt || prompt}`;
     if (n366) n366.text = "";
 
+    // Fix hardcoded LTX workflow parameters
+    const n393 = inputs("393");
+    const n395 = inputs("395");
+    if (n393) {
+      n393.max_frames = totalFrames;
+      n393.segment_lengths = segmentLengths.join(", ");
+    }
+    if (n395) {
+      if (promptCount === 4 && durationSec >= 14) {
+        n395["num_guides.frame_idx_1"] = 0;
+        n395["num_guides.frame_idx_2"] = 90;
+        n395["num_guides.frame_idx_3"] = 180;
+        n395["num_guides.frame_idx_4"] = 270;
+      } else {
+        let frameIdx = 0;
+        for (let g = 1; g <= Math.min(4, segmentLengths.length); g++) {
+          n395[`num_guides.frame_idx_${g}`] = frameIdx;
+          frameIdx += segmentLengths[g - 1];
+        }
+      }
+    }
+
     if (sigmaPreset) {
-      const sigmas = getSigmaSchedules(sigmaPreset as "speed" | "balanced" | "quality");
+      const sigmas = getSigmaSchedules(sigmaPreset as SigmaPreset);
       if (n281) n281.sigmas = sigmas.refiner;
       if (n306) n306.sigmas = sigmas.main;
     }
@@ -178,6 +281,59 @@ export class ComfyUIVideoProvider implements VideoProvider {
       }
     }
 
+    return template;
+  }
+
+  private buildLTX4GridBaselineWorkflow(
+    prompt: string,
+    images: string[],
+    outputPrefix: string,
+    durationSec: number,
+    fps: number,
+  ): Record<string, unknown> {
+    const templatePath = path.join(this.templatesDir, "ltx-i2v-4grid-baseline-simple.json");
+    let raw = fs.readFileSync(templatePath, "utf-8");
+
+    raw = raw.replaceAll("{{filenamePrefix}}", outputPrefix);
+    raw = raw.replaceAll("{{panel1}}", images[0] ?? "");
+    raw = raw.replaceAll("{{panel2}}", images[1] ?? images[0]);
+    raw = raw.replaceAll("{{panel3}}", images[2] ?? images[0]);
+    raw = raw.replaceAll("{{panel4}}", images[3] ?? images[0]);
+
+    const { globalPrompt, localPrompts: parsedLocalPrompts, segmentSeconds } = splitTimelinePrompts(prompt);
+    const fallbackPrompt = globalPrompt || prompt;
+    const localPrompts = parsedLocalPrompts.length > 0
+      ? parsedLocalPrompts
+      : Array.from({ length: Math.min(4, images.length) }, () => fallbackPrompt);
+    const promptCount = Math.max(1, localPrompts.length || 1);
+    const segmentLengths = segmentSeconds.length === promptCount
+      ? segmentSeconds.map((seconds) => Math.max(1, Math.round(seconds * fps)))
+      : buildManualStyleSegmentLengths(durationSec, fps, promptCount);
+
+    const jsonEscape = (value: string) => value
+      .replace(/\\/g, "\\\\")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t")
+      .replace(/"/g, '\\"');
+
+    raw = raw.replaceAll("{{prompt}}", jsonEscape(globalPrompt || prompt));
+    raw = raw.replaceAll("{{localPrompts}}", jsonEscape(localPrompts.join(" | ")));
+    raw = raw.replaceAll("{{segmentLengths}}", segmentLengths.join(", "));
+
+    const tl = {
+      segments: localPrompts.map((segmentPrompt, i) => ({
+        prompt: segmentPrompt,
+        length: segmentLengths[i] ?? segmentLengths[0] ?? 90,
+        color: ["#4f8edc", "#5cb85c", "#e07b3a", "#d9534f"][i] ?? "#999999",
+      })),
+    };
+    raw = raw.replaceAll("{{timelineData}}", JSON.stringify(tl));
+
+    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
+    raw = raw.replaceAll("CKPT_PLACEHOLDER", ckptName.replace(/\\/g, "\\\\"));
+
+    const template = JSON.parse(raw) as Record<string, ComfyNode>;
     return template;
   }
 
@@ -226,7 +382,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
     if (n313) n313.text = LTX_PRO_NEGATIVE;
 
     if (sigmaPreset) {
-      const sigmas = getSigmaSchedules(sigmaPreset as "speed" | "balanced" | "quality");
+      const sigmas = getSigmaSchedules(sigmaPreset as SigmaPreset);
       if (n281) n281.sigmas = sigmas.refiner;
       if (n306) n306.sigmas = sigmas.main;
     }
@@ -314,14 +470,29 @@ export class ComfyUIVideoProvider implements VideoProvider {
       }
 
       await new Promise((resolve) => setTimeout(resolve, 3000));
-      const res = await fetch(`${this.baseUrl}/history/${promptId}`, {
-        headers: this.getAuthHeaders(),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!res.ok) continue;
+      let record: ComfyHistoryRecord | undefined;
+      try {
+        const res = await fetch(`${this.baseUrl}/history/${promptId}`, {
+          headers: this.getAuthHeaders(),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!res.ok) continue;
 
-      const json = (await res.json()) as Record<string, ComfyHistoryRecord>;
-      const record = json[promptId];
+        const json = (await res.json()) as Record<string, ComfyHistoryRecord>;
+        record = json[promptId];
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`  [pollForVideo] History fetch failed for ${promptId}: ${message}`);
+        if (this.outputPrefix) {
+          const fsResult = await this.checkOutputDir(this.outputPrefix);
+          if (fsResult) {
+            console.log(`  [pollForVideo] Found video file after history fetch failure: ${fsResult.filename}`);
+            return fsResult;
+          }
+        }
+        continue;
+      }
+
       if (!record) continue;
 
       const outputs = record.outputs || {};
@@ -354,7 +525,6 @@ export class ComfyUIVideoProvider implements VideoProvider {
     let lastFrameImage: string | undefined;
     let imagePath: string | null = null;
     let fourGridImages: string[] = [];
-
     if (is4Grid) {
       imagePath = "firstFrame" in params && params.firstFrame
         ? params.firstFrame
@@ -364,12 +534,18 @@ export class ComfyUIVideoProvider implements VideoProvider {
       if (!imagePath) {
         throw new Error("LTX multi-guide requires a starting image (firstFrame or initialImage)");
       }
-      // Upload main image + up to 3 extra reference images
+      // Keep all four panels in order: initialImage/panel_1 + panel_2..panel_4 guides.
       const refs = params.referenceImages ?? [];
-      fourGridImages = [imagePath, ...refs.slice(0, 3)];
-      for (const img of fourGridImages) {
+      fourGridImages = [imagePath, ...refs.filter((img) => img && img !== imagePath)].slice(0, 5);
+      const panelPaths = fourGridImages.slice(0, 4);
+      if (panelPaths.length < 4) {
+        throw new Error("LTX multi-guide requires 4 panel images");
+      }
+      const panelBasenames = panelPaths.map((f) => path.basename(f));
+      for (const img of panelPaths) {
         await this.uploadImage(img);
       }
+      fourGridImages = panelBasenames;
     } else if (isLTX) {
       if (isFlf2v) {
         firstFrameImage = "firstFrame" in params ? params.firstFrame : undefined;
@@ -410,11 +586,11 @@ export class ComfyUIVideoProvider implements VideoProvider {
     const workflow = is4Grid
       ? this.buildLTX4GridWorkflow(
           params.prompt,
-          fourGridImages.map((f) => path.basename(f)),
+          fourGridImages,
           params.duration,
           24,
           outputPrefix,
-          sigmaPreset,
+          sigmaPreset || "quality_lite",
         )
       : isLtxPro
         ? this.buildLTXProWorkflow(
@@ -478,10 +654,16 @@ export class ComfyUIVideoProvider implements VideoProvider {
       subfolder: output.subfolder || "",
       type: output.type || "output",
     });
-    const videoRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
-      headers: this.getAuthHeaders(),
-      signal: AbortSignal.timeout(120_000),
-    });
+    let videoRes: Response;
+    try {
+      videoRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
+        headers: this.getAuthHeaders(),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`ComfyUI video download failed: ${message}`);
+    }
     if (!videoRes.ok) {
       throw new Error(`ComfyUI video download failed: ${videoRes.status}`);
     }

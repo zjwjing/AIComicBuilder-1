@@ -51,7 +51,7 @@ export default function EpisodePreviewPage() {
   // Which mode's videos to preview — default to the project's generationMode
   const hasKeyframeVideos = project?.shots.some((s) => getKeyframeVideoUrl(s)) ?? false;
   const hasReferenceVideos = project?.shots.some((s) => getReferenceVideoUrl(s)) ?? false;
-  const hasBothModes = (hasKeyframeVideos && hasReferenceVideos) || generationMode === "4grid";
+  const hasBothModes = hasKeyframeVideos && hasReferenceVideos;
 
   const [previewMode, setPreviewMode] = useState<PreviewMode>(generationMode);
 

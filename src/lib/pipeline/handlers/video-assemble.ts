@@ -2,21 +2,14 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { shots, episodes, projects, characters, dialogues, storyboardVersions } from "@/lib/db/schema";
 import { eq, and, asc, desc } from "drizzle-orm";
-import { type ModelConfig, extractErrorMessage } from "@/lib/generate-utils";
+import { type ModelConfig, extractErrorMessage, resolveGenerationMode } from "@/lib/generate-utils";
 import { DEFAULT_SHOT_DURATION } from "@/lib/config/defaults";
 import { assembleVideo } from "@/lib/video/ffmpeg";
 import { loadShotLegacyViewsBatch } from "@/lib/shot-asset-utils";
 import { generateDialogueAudio } from "@/lib/audio/tts";
 
 export async function handleVideoAssembleSync(projectId: string, _userId: string, payload?: Record<string, unknown>, _modelConfig?: ModelConfig, episodeId?: string) {
-  let generationModeValue: string = "keyframe";
-  if (episodeId) {
-    const [episode] = await db.select({ generationMode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
-    generationModeValue = episode?.generationMode ?? "keyframe";
-  } else {
-    const [project] = await db.select({ generationMode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-    generationModeValue = project?.generationMode ?? "keyframe";
-  }
+  const generationModeValue = await resolveGenerationMode(projectId, episodeId);
 
   let versionId = payload?.versionId as string | undefined;
 

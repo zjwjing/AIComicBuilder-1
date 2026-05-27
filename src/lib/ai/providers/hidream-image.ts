@@ -34,8 +34,9 @@ export class HiDreamImageProvider implements AIProvider {
     const refs_b64: string[] = [];
     let keep_original_aspect = false;
 
-    if (options?.referenceImages && options.referenceImages.length > 0) {
-      for (const imgPath of options.referenceImages) {
+    const refImages = (options?.referenceImages ?? []).slice(0, 6);
+    if (refImages.length > 0) {
+      for (const imgPath of refImages) {
         try {
           const resolved = path.resolve(imgPath);
           if (fs.existsSync(resolved)) {

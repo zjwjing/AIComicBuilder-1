@@ -18,7 +18,7 @@ export default function EpisodeLayout({
   const { project, loading, fetchProject } = useProjectStore();
 
   useEffect(() => {
-    fetchProject(id, episodeId);
+    fetchProject(id, episodeId, undefined, true);
   }, [id, episodeId, fetchProject]);
 
   if (loading || !project) {

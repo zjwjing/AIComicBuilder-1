@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY } from "@/lib/config/defaults";
-import { shots, characters, episodeCharacters, projects, episodes } from "@/lib/db/schema";
+import { shots, characters, episodeCharacters, projects } from "@/lib/db/schema";
 import { eq, and, asc, inArray } from "drizzle-orm";
 import {
   type ModelConfig,
   ratioToImageOpts,
   getVersionedUploadDir,
+  resolveGenerationMode,
   extractErrorMessage,
   getEpisodeCharacters,
   collectStoryboardEditReferences,
@@ -27,14 +28,24 @@ import {
   type ShotAssetType,
   type ShotLegacyView,
 } from "@/lib/shot-asset-utils";
+import { buildPipelineDiagnostic, diagnosticError } from "@/lib/pipeline/diagnostics";
 
-async function resolveGenerationMode(projectId: string, episodeId?: string | null): Promise<string> {
-  if (episodeId) {
-    const [ep] = await db.select({ mode: episodes.generationMode }).from(episodes).where(eq(episodes.id, episodeId));
-    if (ep?.mode) return ep.mode;
+async function appendFrameToCharacterHistory(
+  charRows: Array<{ id: string; referenceImageHistory: string | null }>,
+  filePath: string,
+) {
+  if (charRows.length === 0) return;
+  for (const char of charRows) {
+    let history: string[] = [];
+    try { history = JSON.parse(char.referenceImageHistory || "[]"); } catch {}
+    if (!history.includes(filePath)) {
+      history.push(filePath);
+      await db
+        .update(characters)
+        .set({ referenceImageHistory: JSON.stringify(history) })
+        .where(eq(characters.id, char.id));
+    }
   }
-  const [project] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-  return project?.mode ?? "keyframe";
 }
 
 function getPanelFrames(view: ShotLegacyView): string[] {
@@ -95,7 +106,7 @@ export async function handleBatchFrameGenerate(
 ) {
   if (!modelConfig?.image) {
     return NextResponse.json(
-      { error: "No image model configured" },
+      diagnosticError("PIPE_002", "No image model configured", "Configure modelConfig.image before generating frames."),
       { status: 400 }
     );
   }
@@ -112,7 +123,11 @@ export async function handleBatchFrameGenerate(
     .orderBy(asc(shots.sequence));
 
   if (allShots.length === 0) {
-    return NextResponse.json({ results: [], message: "No shots found" });
+    return NextResponse.json({
+      results: [],
+      message: "No shots found",
+      diagnostic: buildPipelineDiagnostic("PIPE_007", "No shots found", "Create or import shots before running batch frame generation.", "warning"),
+    });
   }
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
   const generationMode = await resolveGenerationMode(projectId, episodeId);
@@ -143,7 +158,16 @@ export async function handleBatchFrameGenerate(
   const charsWithImages = frameCharacters.filter((c) => c.referenceImage);
 
   const ai = resolveImageProvider(modelConfig, versionedUploadDir);
-  const results: Array<{ shotId: string; sequence: number; status: string; firstFrame?: string; lastFrame?: string; panels?: string[]; error?: string }> = [];
+  const results: Array<{
+    shotId: string;
+    sequence: number;
+    status: string;
+    firstFrame?: string;
+    lastFrame?: string;
+    panels?: string[];
+    error?: string;
+    diagnostic?: ReturnType<typeof buildPipelineDiagnostic>;
+  }> = [];
 
   const overwrite = payload?.overwrite === true;
   const needProcess = allShots.filter((s) => {
@@ -198,6 +222,9 @@ export async function handleBatchFrameGenerate(
       const shotCharRefImages = filteredChars.map((c) => c.referenceImage!);
       const shotCharRefLabels = filteredChars.map((c) => c.name);
       const shotCharsForPersist = filteredChars.length > 0 ? filteredChars.map((c) => c.name) : undefined;
+      const shotCharDescriptions = filteredChars.length > 0
+        ? filteredChars.map((c) => `${c.name}: ${c.description}`).join("\n")
+        : characterDescriptions;
 
       if (is4Grid) {
         const panelInputs = [
@@ -212,13 +239,14 @@ export async function handleBatchFrameGenerate(
             panelLabel: panel.label,
             sceneDescription: shot.prompt || "",
             panelDescription: panel.description,
-            characterDescriptions,
+            characterDescriptions: shotCharDescriptions,
           });
           const panelPath = await ai.generateImage(panelPrompt, {
             ...imageOpts,
             quality: DEFAULT_IMAGE_QUALITY,
-            referenceImages: [...generatedPanels, ...shotCharRefImages],
-            referenceLabels: [...generatedPanels.map((_, i) => `Previous Panel ${i + 1}`), ...shotCharRefLabels],
+            referenceImages: shotCharRefImages,
+            referenceLabels: shotCharRefLabels,
+            editBaseImage: generatedPanels.length > 0 ? generatedPanels[generatedPanels.length - 1] : undefined,
           });
           await upsertGeneratedAsset({
             shotId: shot.id,
@@ -230,6 +258,7 @@ export async function handleBatchFrameGenerate(
           generatedPanels.push(panelPath);
         }
 
+        await appendFrameToCharacterHistory(filteredChars, generatedPanels[0]);
         await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shot.id));
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         doneCount++;
@@ -242,7 +271,7 @@ export async function handleBatchFrameGenerate(
       const firstPrompt = buildFirstFramePrompt({
         sceneDescription: shot.prompt || "",
         startFrameDesc: shotLegacy?.startFrameDesc || shot.prompt || "",
-        characterDescriptions,
+        characterDescriptions: shotCharDescriptions,
         slotContents: frameFirstSlots,
       });
       const firstFramePath = await ai.generateImage(firstPrompt, {
@@ -255,16 +284,20 @@ export async function handleBatchFrameGenerate(
       const lastPrompt = buildLastFramePrompt({
         sceneDescription: shot.prompt || "",
         endFrameDesc: shotLegacy?.endFrameDesc || shot.prompt || "",
-        characterDescriptions,
+        characterDescriptions: shotCharDescriptions,
         firstFramePath,
         slotContents: frameLastSlots,
       });
       const lastFramePath = await ai.generateImage(lastPrompt, {
         ...imageOpts,
         quality: DEFAULT_IMAGE_QUALITY,
-        referenceImages: [firstFramePath, ...shotCharRefImages],
-        referenceLabels: ["首帧/First Frame", ...shotCharRefLabels],
+        referenceImages: shotCharRefImages,
+        referenceLabels: shotCharRefLabels,
+        editBaseImage: firstFramePath,
       });
+
+      await appendFrameToCharacterHistory(filteredChars, firstFramePath);
+      await appendFrameToCharacterHistory(filteredChars, lastFramePath);
 
       await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shot.id));
 
@@ -312,6 +345,11 @@ export async function handleBatchFrameGenerate(
         sequence: shot.sequence,
         status: "error",
         error: extractErrorMessage(err),
+        diagnostic: buildPipelineDiagnostic(
+          "PIPE_006",
+          extractErrorMessage(err),
+          "Inspect the image provider logs and retry this shot after the upstream issue is resolved.",
+        ),
       });
     }
   }
@@ -332,15 +370,24 @@ export async function handleSingleFrameGenerate(
 ) {
   const shotId = payload?.shotId as string;
   if (!shotId) {
-    return NextResponse.json({ error: "No shotId provided" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_001", "No shotId provided", "Pass payload.shotId when calling single frame generation."),
+      { status: 400 },
+    );
   }
   if (!modelConfig?.image) {
-    return NextResponse.json({ error: "No image model configured" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_002", "No image model configured", "Configure modelConfig.image before generating frames."),
+      { status: 400 },
+    );
   }
 
   const [shot] = await db.select().from(shots).where(eq(shots.id, shotId));
   if (!shot) {
-    return NextResponse.json({ error: "Shot not found" }, { status: 404 });
+    return NextResponse.json(
+      diagnosticError("PIPE_003", "Shot not found", "Verify the shotId belongs to the current project/version."),
+      { status: 404 },
+    );
   }
   const generationMode = await resolveGenerationMode(projectId, episodeId || shot.episodeId);
   const is4Grid = generationMode === "4grid";
@@ -357,7 +404,7 @@ export async function handleSingleFrameGenerate(
   const shotEpisodeId = episodeId || shot.episodeId;
   const projectCharacters = await getEpisodeCharacters(projectId, shotEpisodeId);
 
-  const characterDescriptions = projectCharacters
+  const allCharDescriptions = projectCharacters
     .map((c) => `${c.name}: ${c.description}`)
     .join("\n");
 
@@ -371,6 +418,10 @@ export async function handleSingleFrameGenerate(
     ? projectCharacters.filter((c) => c.referenceImage && shotCharNameSet.has(c.name))
     : projectCharacters.filter((c) => c.referenceImage);
   const shotCharRefImages = filteredChars.map((c) => c.referenceImage as string);
+  const shotCharRefLabels = filteredChars.map((c) => c.name);
+  const shotCharDescriptions = filteredChars.length > 0
+    ? filteredChars.map((c) => `${c.name}: ${c.description}`).join("\n")
+    : allCharDescriptions;
 
   const ai = resolveImageProvider(modelConfig, versionedUploadDir);
   const imageOpts = ratioToImageOpts(payload?.ratio as string | undefined);
@@ -394,12 +445,14 @@ export async function handleSingleFrameGenerate(
           panelLabel: panel.label,
           sceneDescription: shot.prompt || "",
           panelDescription: panel.description,
-          characterDescriptions,
+          characterDescriptions: shotCharDescriptions,
         });
         const panelPath = await ai.generateImage(panelPrompt, {
           ...imageOpts,
           quality: DEFAULT_IMAGE_QUALITY,
-          referenceImages: [...generatedPanels, ...shotCharRefImages],
+          referenceImages: shotCharRefImages,
+          referenceLabels: shotCharRefLabels,
+          editBaseImage: generatedPanels.length > 0 ? generatedPanels[generatedPanels.length - 1] : undefined,
         });
         await upsertGeneratedAsset({
           shotId,
@@ -410,6 +463,7 @@ export async function handleSingleFrameGenerate(
         generatedPanels.push(panelPath);
       }
 
+      await appendFrameToCharacterHistory(filteredChars, generatedPanels[0]);
       await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shotId));
       return NextResponse.json({ shotId, panels: generatedPanels, status: "ok" });
     }
@@ -417,27 +471,33 @@ export async function handleSingleFrameGenerate(
     const firstPrompt = buildFirstFramePrompt({
       sceneDescription: shot.prompt || "",
       startFrameDesc: startFramePromptText,
-      characterDescriptions,
+      characterDescriptions: shotCharDescriptions,
       slotContents: frameFirstSlots,
     });
     const firstFramePath = await ai.generateImage(firstPrompt, {
       ...imageOpts,
       quality: DEFAULT_IMAGE_QUALITY,
       referenceImages: shotCharRefImages,
+      referenceLabels: shotCharRefLabels,
     });
 
     const lastPrompt = buildLastFramePrompt({
       sceneDescription: shot.prompt || "",
       endFrameDesc: endFramePromptText,
-      characterDescriptions,
+      characterDescriptions: shotCharDescriptions,
       firstFramePath,
       slotContents: frameLastSlots,
     });
     const lastFramePath = await ai.generateImage(lastPrompt, {
       ...imageOpts,
       quality: DEFAULT_IMAGE_QUALITY,
-      referenceImages: [firstFramePath, ...shotCharRefImages],
+      referenceImages: shotCharRefImages,
+      referenceLabels: shotCharRefLabels,
+      editBaseImage: firstFramePath,
     });
+
+    await appendFrameToCharacterHistory(filteredChars, firstFramePath);
+    await appendFrameToCharacterHistory(filteredChars, lastFramePath);
 
     await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shotId));
 
@@ -466,7 +526,18 @@ export async function handleSingleFrameGenerate(
   } catch (err) {
     console.error(`[SingleFrameGenerate] Error for shot ${shotId}:`, err);
     await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shotId));
-    return NextResponse.json({ shotId, status: "error", error: extractErrorMessage(err) }, { status: 500 });
+    return NextResponse.json(
+      {
+        shotId,
+        status: "error",
+        ...diagnosticError(
+          "PIPE_006",
+          extractErrorMessage(err),
+          "Inspect the image provider logs and retry the shot after the upstream issue is resolved.",
+        ),
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -479,22 +550,34 @@ export async function handleSingleStoryboardEdit(
 ) {
   const shotId = payload?.shotId as string;
   if (!shotId) {
-    return NextResponse.json({ error: "No shotId provided" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_001", "No shotId provided", "Pass payload.shotId when calling storyboard edit generation."),
+      { status: 400 },
+    );
   }
   if (!modelConfig?.image) {
-    return NextResponse.json({ error: "No image model configured" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_002", "No image model configured", "Configure modelConfig.image before running storyboard edits."),
+      { status: 400 },
+    );
   }
 
   const [shot] = await db.select().from(shots).where(eq(shots.id, shotId));
   if (!shot) {
-    return NextResponse.json({ error: "Shot not found" }, { status: 404 });
+    return NextResponse.json(
+      diagnosticError("PIPE_003", "Shot not found", "Verify the shotId belongs to the current project/version."),
+      { status: 404 },
+    );
   }
 
   const versionedUploadDir = await getVersionedUploadDir(shot.versionId);
   const references = collectStoryboardEditReferences(payload);
   const fallbackBaseImage = typeof payload?.baseImage === "string" ? payload.baseImage : references[0]?.path;
   if (!fallbackBaseImage) {
-    return NextResponse.json({ error: "No base image/reference images provided" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_008", "No base image/reference images provided", "Pass baseImage or at least one reference image before running storyboard edits."),
+      { status: 400 },
+    );
   }
 
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
@@ -529,7 +612,18 @@ export async function handleSingleStoryboardEdit(
     return NextResponse.json({ shotId, imagePath, status: "ok" });
   } catch (err) {
     console.error(`[SingleStoryboardEdit] Error for shot ${shotId}:`, err);
-    return NextResponse.json({ shotId, status: "error", error: extractErrorMessage(err) }, { status: 500 });
+    return NextResponse.json(
+      {
+        shotId,
+        status: "error",
+        ...diagnosticError(
+          "PIPE_006",
+          extractErrorMessage(err),
+          "Inspect the image edit provider logs and retry after the upstream issue is resolved.",
+        ),
+      },
+      { status: 500 },
+    );
   }
 }
 
@@ -542,15 +636,24 @@ export async function handleSingleSceneFrame(
 ) {
   const shotId = payload?.shotId as string | undefined;
   if (!shotId) {
-    return NextResponse.json({ error: "No shotId provided" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_001", "No shotId provided", "Pass payload.shotId when calling scene frame generation."),
+      { status: 400 },
+    );
   }
   if (!modelConfig?.image) {
-    return NextResponse.json({ error: "No image model configured" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_002", "No image model configured", "Configure modelConfig.image before generating scene frames."),
+      { status: 400 },
+    );
   }
 
   const [shot] = await db.select().from(shots).where(eq(shots.id, shotId));
   if (!shot) {
-    return NextResponse.json({ error: "Shot not found" }, { status: 404 });
+    return NextResponse.json(
+      diagnosticError("PIPE_003", "Shot not found", "Verify the shotId belongs to the current project/version."),
+      { status: 404 },
+    );
   }
 
   const versionedUploadDir = await getVersionedUploadDir(shot.versionId);
@@ -607,7 +710,15 @@ export async function handleSingleSceneFrame(
     console.error(`[SingleSceneFrame] Error for shot ${shot.sequence}:`, err);
     await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shotId));
     return NextResponse.json(
-      { shotId, status: "error", error: extractErrorMessage(err) },
+      {
+        shotId,
+        status: "error",
+        ...diagnosticError(
+          "PIPE_006",
+          extractErrorMessage(err),
+          "Inspect the image provider logs and retry the scene frame after the upstream issue is resolved.",
+        ),
+      },
       { status: 500 }
     );
   }
@@ -621,7 +732,10 @@ export async function handleBatchSceneFrame(
   episodeId?: string
 ) {
   if (!modelConfig?.image) {
-    return NextResponse.json({ error: "No image model configured" }, { status: 400 });
+    return NextResponse.json(
+      diagnosticError("PIPE_002", "No image model configured", "Configure modelConfig.image before generating scene frames."),
+      { status: 400 },
+    );
   }
 
   const overwrite = payload?.overwrite === true;
@@ -642,7 +756,14 @@ export async function handleBatchSceneFrame(
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
 
   // Mark all eligible shots as generating
-  const results: Array<{ shotId: string; sequence: number; status: string; generated?: number }> = [];
+  const results: Array<{
+    shotId: string;
+    sequence: number;
+    status: string;
+    generated?: number;
+    error?: string;
+    diagnostic?: ReturnType<typeof buildPipelineDiagnostic>;
+  }> = [];
 
   for (const shot of allShots) {
     const refImages = allShotsLegacy.get(shot.id)?.referenceImages ?? [];
@@ -676,6 +797,18 @@ export async function handleBatchSceneFrame(
         console.log(`[BatchRefImage] Shot ${shot.sequence}: ref "${entry.id}" done`);
       } catch (err) {
         console.warn(`[BatchRefImage] Shot ${shot.sequence} ref ${entry.id} failed:`, err);
+        results.push({
+          shotId: shot.id,
+          sequence: shot.sequence,
+          status: "error",
+          generated,
+          error: extractErrorMessage(err),
+          diagnostic: buildPipelineDiagnostic(
+            "PIPE_006",
+            extractErrorMessage(err),
+            "Inspect the image provider logs and retry the failed scene reference generation.",
+          ),
+        });
       }
     }
 

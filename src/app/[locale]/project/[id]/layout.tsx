@@ -23,7 +23,7 @@ export default function ProjectLayout({
   const { project, loading, fetchProject } = useProjectStore();
 
   useEffect(() => {
-    fetchProject(id);
+    fetchProject(id, undefined, undefined, true);
   }, [id, fetchProject]);
 
   if (loading || !project) {

@@ -39,7 +39,7 @@ type ReferenceVideoParams = {
   initialImage: string;
 };
 
-export type SigmaPreset = "speed" | "balanced" | "quality";
+export type SigmaPreset = "speed" | "balanced" | "quality" | "quality_lite";
 
 export type CameraControl =
   | "dolly-in" | "dolly-out"

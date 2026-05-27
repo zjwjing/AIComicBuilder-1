@@ -1,5 +1,6 @@
 "use client";
 
+import { useParams } from "next/navigation";
 import {
   useProjectStore,
   getFirstFrameUrl,
@@ -54,6 +55,7 @@ import Link from "next/link";
 export default function EpisodeStoryboardPage() {
   const t = useTranslations();
   const locale = useLocale();
+  const params = useParams<{ id: string; episodeId: string }>();
   const { project, fetchProject } = useProjectStore();
   const getModelConfig = useModelStore((s) => s.getModelConfig);
   const [generating, setGenerating] = useState(false);
@@ -70,6 +72,13 @@ export default function EpisodeStoryboardPage() {
   const [_selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [openDrawerShotId, setOpenDrawerShotId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+
+  // Layout fetches lightweight data (no shots); re-fetch full data here
+  useEffect(() => {
+    if (project && project.shots && project.shots.length === 0 && params.id && params.episodeId) {
+      fetchProject(params.id, params.episodeId);
+    }
+  }, [project?.shots?.length, params.id, params.episodeId, fetchProject]);
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const versionDropdownRef = useRef<HTMLDivElement>(null);
   const [batchProgress, setBatchProgress] = useState<{
@@ -163,15 +172,6 @@ export default function EpisodeStoryboardPage() {
     }).length;
   }, [project?.shots]);
 
-  const shotsWithKeyframePrompts = useMemo(() => {
-    if (!project) return 0;
-    return project.shots.filter((s) => {
-      const ff = getFirstFramePrompt(s);
-      const lf = getLastFramePrompt(s);
-      return !!ff && !!lf;
-    }).length;
-  }, [project?.shots]);
-
   const nextVersionNum = useMemo(() => {
     if (versions.length === 0) return 1;
     return Math.max(...versions.map((v) => v.versionNum)) + 1;
@@ -195,6 +195,11 @@ export default function EpisodeStoryboardPage() {
   const shotsWithFrames = project.shots.filter((s) => shotHasRequiredFrames(s)).length;
   const shotsWithVideoPrompts = project.shots.filter((s) => s.videoPrompt).length;
   const shotsWithFrameAny = project.shots.filter((s) => shotHasAnyFrame(s)).length;
+  const shotsReadyForFrameGeneration = project.shots.filter((s) =>
+    generationMode === "4grid"
+      ? !!(s.prompt || s.motionScript || s.videoScript || getFirstFramePrompt(s) || getLastFramePrompt(s))
+      : !!(getFirstFramePrompt(s) || getLastFramePrompt(s))
+  ).length;
   const charactersWithRefs = project.characters.filter((c) => c.referenceImage);
   const hasReferenceImages = charactersWithRefs.length > 0;
 
@@ -601,7 +606,7 @@ export default function EpisodeStoryboardPage() {
     const shots = project.shots;
     const needsText = shots.some((s) => !s.prompt && !s.motionScript);
     const needsFrame = shots.some((s) => !shotHasRequiredFrames(s));
-    const needsPrompt = shots.some((s) => !s.videoPrompt);
+    const needsPrompt = needsFrame || shots.some((s) => !s.videoPrompt);
     const needsVideo = shots.some((s) =>
       generationMode === "reference" ? !getReferenceVideoUrl(s) : !getKeyframeVideoUrl(s)
     );
@@ -659,6 +664,7 @@ export default function EpisodeStoryboardPage() {
               "ref_image_prompts",
               // video
               "video_generate",
+              "video_generate_4grid",
               "ref_video_generate",
               "ref_video_prompt",
             ]}
@@ -875,18 +881,18 @@ export default function EpisodeStoryboardPage() {
                   size="sm"
                   onClick={handleGenerateKeyframeAssets}
                   disabled={generatingKeyframeAssets || anyGenerating || totalShots === 0}
-                  title="基于已有的镜头元数据生成首尾帧的图像提示词"
+                  title={generationMode === "4grid" ? "生成四宫格各面板的图像提示词" : "基于已有的镜头元数据生成首尾帧的图像提示词"}
                 >
                   {generatingKeyframeAssets ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Sparkles className="h-3.5 w-3.5" />
                   )}
-                  {generatingKeyframeAssets ? "生成中…" : "生成首尾帧提示词"}
+                  {generatingKeyframeAssets ? "生成中…" : generationMode === "4grid" ? "生成面板提示词" : "生成首尾帧提示词"}
                 </Button>
                 <Button
                   onClick={() => handleBatchGenerateFrames(false)}
-                  disabled={anyGenerating || totalShots === 0 || shotsWithKeyframePrompts === 0}
+                  disabled={anyGenerating || totalShots === 0 || shotsReadyForFrameGeneration === 0}
                   variant="default"
                   size="sm"
                 >
@@ -901,7 +907,7 @@ export default function EpisodeStoryboardPage() {
                 </Button>
                 <Button
                   onClick={() => handleBatchGenerateFrames(true)}
-                  disabled={anyGenerating || totalShots === 0 || shotsWithKeyframePrompts === 0}
+                  disabled={anyGenerating || totalShots === 0 || shotsReadyForFrameGeneration === 0}
                   variant="ghost"
                   size="icon"
                   title={t("project.batchGenerateFramesOverwrite")}

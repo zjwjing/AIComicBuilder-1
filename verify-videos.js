@@ -33,7 +33,7 @@ videoAssets.filter(a => a.is_active === 1).forEach(a => shotsWithVideo.add(a.sho
 console.log(`Shots with active video: ${shotsWithVideo.size}\n`);
 
 // Check local files
-const localFiles = new Set(fs.readdirSync('uploads/projects/SKB6CNwqAn5H/20260502-V1/videos').filter(f => f.endsWith('.mp4'))));
+const localFiles = new Set(fs.readdirSync('uploads/projects/SKB6CNwqAn5H/20260502-V1/videos').filter(f => f.endsWith('.mp4')));
 console.log(`Local video files: ${localFiles.size}\n`);
 
 // Check episode 51XKwFOv4jkF specifically

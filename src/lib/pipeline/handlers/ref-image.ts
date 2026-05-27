@@ -367,6 +367,8 @@ export async function handleBatchRefImageGenerate(
             if (ref) entryRefs.push(ref);
           }
         }
+        // Limit to 6 character refs to avoid hitting API limits
+        entryRefs.splice(6);
 
         const imagePath = await imageProvider.generateImage(entry.prompt, {
           quality: DEFAULT_IMAGE_QUALITY,
@@ -452,6 +454,7 @@ export async function handleSingleShotRefImageGenerateAll(
           if (ref) entryRefs.push(ref);
         }
       }
+      entryRefs.splice(6);
 
       const imagePath = await imageProvider.generateImage(entry.prompt, {
         quality: DEFAULT_IMAGE_QUALITY,
