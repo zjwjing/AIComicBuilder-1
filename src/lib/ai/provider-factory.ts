@@ -16,7 +16,7 @@ import { AivideoVideoProvider } from "./providers/aivideo-video";
 import { ASXSImageProvider } from "./providers/asxs-image";
 import { FramepackVideoProvider } from "./providers/framepack-video";
 import { OmnigenImageProvider } from "./providers/omnigen-image";
-import { getAIProvider, getVideoProvider } from "./index";
+import { setDefaultAIProvider, getAIProvider, getVideoProvider } from "./index";
 import type { AIProvider, VideoProvider } from "./types";
 
 interface ProviderConfig {
@@ -182,25 +182,56 @@ export function createVideoProvider(config: ProviderConfig, uploadDir?: string):
   }
 }
 
+function ensureDefaultProvider(): AIProvider {
+  try {
+    return getAIProvider();
+  } catch {
+    const fallback = new OpenAIProvider();
+    setDefaultAIProvider(fallback, (uploadDir) => new OpenAIProvider({ ...(uploadDir && { uploadDir }) }));
+    return fallback;
+  }
+}
+
 const TEXT_CAPABLE_PROTOCOLS = new Set(["openai", "gemini", "nvidia"]);
 
 export function resolveAIProvider(modelConfig?: ModelConfigPayload): AIProvider {
   if (modelConfig?.text && TEXT_CAPABLE_PROTOCOLS.has(modelConfig.text.protocol)) {
     return createAIProvider(modelConfig.text);
   }
-  return getAIProvider();
+  if (modelConfig?.text) {
+    console.warn(`[resolveAIProvider] Protocol "${modelConfig.text.protocol}" does not support text — falling back to default`);
+  }
+  return ensureDefaultProvider();
+}
+
+function ensureDefaultImageProvider(uploadDir?: string): AIProvider {
+  try {
+    return getAIProvider(uploadDir);
+  } catch {
+    const fallback = new OpenAIProvider({ ...(uploadDir && { uploadDir }) });
+    setDefaultAIProvider(fallback, (ud) => new OpenAIProvider({ ...(ud && { uploadDir: ud }) }));
+    return fallback;
+  }
+}
+
+function ensureDefaultVideoProvider(uploadDir?: string): VideoProvider {
+  try {
+    return getVideoProvider(uploadDir);
+  } catch {
+    throw new Error("No video provider configured. Set modelConfig.video or configure a video provider via environment variables.");
+  }
 }
 
 export function resolveImageProvider(modelConfig?: ModelConfigPayload, uploadDir?: string): AIProvider {
   if (modelConfig?.image) {
     return createAIProvider(modelConfig.image, uploadDir);
   }
-  return getAIProvider(uploadDir);
+  return ensureDefaultImageProvider(uploadDir);
 }
 
 export function resolveVideoProvider(modelConfig?: ModelConfigPayload, uploadDir?: string): VideoProvider {
   if (modelConfig?.video) {
     return createVideoProvider(modelConfig.video, uploadDir);
   }
-  return getVideoProvider(uploadDir);
+  return ensureDefaultVideoProvider(uploadDir);
 }

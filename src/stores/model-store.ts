@@ -187,10 +187,11 @@ export const useModelStore = create<ModelStore>()(
 
       getModelConfig: () => {
         const state = get();
-        function resolve(ref: ModelRef | null) {
+        function resolve(ref: ModelRef | null, expectedCapability?: Capability) {
           if (!ref) return null;
           const provider = state.providers.find((p) => p.id === ref.providerId);
           if (!provider) return null;
+          if (expectedCapability && provider.capability !== expectedCapability) return null;
           const modelExists = provider.models.some((m) => m.id === ref.modelId && m.checked);
           if (!modelExists) return null;
           return {
@@ -202,9 +203,9 @@ export const useModelStore = create<ModelStore>()(
           };
         }
         return {
-          text: resolve(state.defaultTextModel),
-          image: resolve(state.defaultImageModel),
-          video: resolve(state.defaultVideoModel),
+          text: resolve(state.defaultTextModel, "text"),
+          image: resolve(state.defaultImageModel, "image"),
+          video: resolve(state.defaultVideoModel, "video"),
         };
       },
     }),
