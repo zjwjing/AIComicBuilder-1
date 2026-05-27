@@ -199,7 +199,13 @@ export function resolveAIProvider(modelConfig?: ModelConfigPayload): AIProvider 
     return createAIProvider(modelConfig.text);
   }
   if (modelConfig?.text) {
-    console.warn(`[resolveAIProvider] Protocol "${modelConfig.text.protocol}" does not support text — falling back to default`);
+    // Protocol doesn't support text natively (e.g. sensenova) — use OpenAI-compatible client
+    console.warn(`[resolveAIProvider] "${modelConfig.text.protocol}" does not support text — creating OpenAI-compatible client`);
+    return new OpenAIProvider({
+      baseURL: modelConfig.text.baseUrl,
+      apiKey: modelConfig.text.apiKey,
+      model: modelConfig.text.modelId,
+    });
   }
   return ensureDefaultProvider();
 }
