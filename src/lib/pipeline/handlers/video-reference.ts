@@ -64,8 +64,14 @@ export async function handleSingleReferenceVideo(
     for (const n of r.characters ?? []) shotCharNameSet.add(n);
   }
 
+  const motionContext = shot.motionScript || shot.videoScript || shot.prompt || "";
   const charRefs = projectCharacters
-    .filter((c) => !!c.referenceImage && shotCharNameSet.has(c.name))
+    .filter((c) => {
+      if (!c.referenceImage) return false;
+      if (shotCharNameSet.size > 0) return shotCharNameSet.has(c.name);
+      return motionContext.includes(c.name);
+    })
+    .slice(0, 6)
     .map((c) => ({ name: c.name, imagePath: c.referenceImage as string }));
 
   const shotDialogues = await db
@@ -267,7 +273,7 @@ export async function handleBatchReferenceVideo(
 
   const projectCharacters = await getEpisodeCharacters(projectId, episodeId);
 
-  const charsWithRefsAll = projectCharacters.filter((c) => !!c.referenceImage);
+  const charsWithRefsAll = projectCharacters.filter((c) => !!c.referenceImage).slice(0, 6);
   if (charsWithRefsAll.length === 0) {
     return NextResponse.json(
       { error: "No character reference images available." },

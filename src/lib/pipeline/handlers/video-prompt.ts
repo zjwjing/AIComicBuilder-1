@@ -126,9 +126,12 @@ export async function handleSingleVideoPrompt(
     for (const r of shotView.referenceImages) {
       for (const n of r.characters ?? []) shotCharNameSetVP.add(n);
     }
-    const charsWithRefsHere = shotCharacters.filter(
-      (c) => !!c.referenceImage && (shotCharNameSetVP.size === 0 || shotCharNameSetVP.has(c.name))
-    );
+    const charsWithRefsHere = shotCharacters.filter((c) => {
+      if (!c.referenceImage) return false;
+      if (shotCharNameSetVP.size > 0) return shotCharNameSetVP.has(c.name);
+      // Fall back to matching character name in motion script text
+      return motionContext.includes(c.name);
+    }).slice(0, 6);
     const characterRefInfos = charsWithRefsHere.map((c, i) => ({
       name: c.name,
       index: i + 1,
@@ -326,9 +329,11 @@ export async function handleBatchVideoPrompt(
         for (const r of shotLegacy?.referenceImages ?? []) {
           for (const n of r.characters ?? []) shotCharNameSetBVP.add(n);
         }
-        const batchCharsWithRefs = batchCharacters.filter(
-          (c) => !!c.referenceImage && (shotCharNameSetBVP.size === 0 || shotCharNameSetBVP.has(c.name))
-        );
+        const batchCharsWithRefs = batchCharacters.filter((c) => {
+          if (!c.referenceImage) return false;
+          if (shotCharNameSetBVP.size > 0) return shotCharNameSetBVP.has(c.name);
+          return motionContext.includes(c.name);
+        }).slice(0, 6);
         const characterRefInfos = batchCharsWithRefs.map((c, i) => ({
           name: c.name,
           index: i + 1,
