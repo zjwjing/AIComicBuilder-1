@@ -167,7 +167,7 @@ export async function handleSingleReferenceVideo(
         console.log(`[SingleReferenceVideo] Shot ${shot.sequence} promptRequest:\n${promptRequest}`);
         const rawPrompt = await textProvider.generateText(promptRequest, {
           systemPrompt: refVideoSystem,
-          images: sceneFramePaths,
+          images: sceneFramePaths.slice(0, 6),
           temperature: TEMPERATURE_GENERAL,
         });
         const enhancedRaw = await enhanceVideoPrompt(rawPrompt.trim(), modelConfig);
@@ -379,7 +379,7 @@ export async function handleBatchReferenceVideo(
           });
           const rawPrompt = await textProvider.generateText(promptRequest, {
             systemPrompt: refVideoSystem,
-            images: sceneFramePaths,
+            images: sceneFramePaths.slice(0, 6),
             temperature: TEMPERATURE_GENERAL,
           });
           const enhancedRaw = await enhanceVideoPrompt(rawPrompt.trim(), modelConfig);

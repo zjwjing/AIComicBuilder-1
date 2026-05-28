@@ -216,9 +216,9 @@ export async function handleBatchFrameGenerate(
         ...(ffAssetExisting?.characters ?? []),
         ...(lfAssetExisting?.characters ?? []),
       ]);
-      const filteredChars = shotCharNameSet.size > 0
+      const filteredChars = (shotCharNameSet.size > 0
         ? charsWithImages.filter((c) => shotCharNameSet.has(c.name))
-        : charsWithImages;
+        : charsWithImages).slice(0, 6);
       const shotCharRefImages = filteredChars.map((c) => c.referenceImage!);
       const shotCharRefLabels = filteredChars.map((c) => c.name);
       const shotCharsForPersist = filteredChars.length > 0 ? filteredChars.map((c) => c.name) : undefined;
@@ -414,9 +414,9 @@ export async function handleSingleFrameGenerate(
     ...(ffAsset?.characters ?? []),
     ...(lfAsset?.characters ?? []),
   ]);
-  const filteredChars = shotCharNameSet.size > 0
+  const filteredChars = (shotCharNameSet.size > 0
     ? projectCharacters.filter((c) => c.referenceImage && shotCharNameSet.has(c.name))
-    : projectCharacters.filter((c) => c.referenceImage);
+    : projectCharacters.filter((c) => c.referenceImage)).slice(0, 6);
   const shotCharRefImages = filteredChars.map((c) => c.referenceImage as string);
   const shotCharRefLabels = filteredChars.map((c) => c.name);
   const shotCharDescriptions = filteredChars.length > 0

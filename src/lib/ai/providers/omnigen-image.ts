@@ -236,7 +236,7 @@ export class OmnigenImageProvider implements AIProvider {
       uploadedPaths.push(baseImage);
     }
 
-    for (const ref of refs) {
+    for (const ref of refs.slice(0, 6)) {
       const isBase = baseImage && ref === baseImage;
       if (isBase) continue;
       if (fs.existsSync(path.resolve(ref))) {
