@@ -182,14 +182,21 @@ export function createVideoProvider(config: ProviderConfig, uploadDir?: string):
   }
 }
 
+function isTextCapable(provider: AIProvider): boolean {
+  return provider instanceof OpenAIProvider || provider instanceof GeminiProvider;
+}
+
 function ensureDefaultProvider(): AIProvider {
   try {
-    return getAIProvider();
+    const existing = getAIProvider();
+    if (isTextCapable(existing)) return existing;
+    console.warn(`[ensureDefaultProvider] Default provider (${existing.constructor.name}) does not support text — creating OpenAI fallback`);
   } catch {
-    const fallback = new OpenAIProvider();
-    setDefaultAIProvider(fallback, (uploadDir) => new OpenAIProvider({ ...(uploadDir && { uploadDir }) }));
-    return fallback;
+    // No default set
   }
+  const fallback = new OpenAIProvider();
+  try { setDefaultAIProvider(fallback, (ud) => new OpenAIProvider({ ...(ud && { uploadDir: ud }) })); } catch { /* best effort */ }
+  return fallback;
 }
 
 const TEXT_CAPABLE_PROTOCOLS = new Set(["openai", "gemini", "nvidia"]);
