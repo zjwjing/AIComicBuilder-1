@@ -99,6 +99,7 @@ function assetToRefImage(a: ShotAsset, allAssets: ShotAsset[] = []): RefImage {
 interface ShotCardProps {
   shot: Shot;
   projectId: string;
+  episodeId?: string | null;
   onUpdate: () => void;
   generationMode?: "keyframe" | "reference" | "4grid";
   videoRatio?: string;
@@ -177,6 +178,7 @@ function StepRow({
 export function ShotCard({
   shot,
   projectId,
+  episodeId,
   onUpdate,
   generationMode = "keyframe",
   videoRatio = "16:9",
@@ -317,6 +319,7 @@ export function ShotCard({
           action: "single_frame_generate",
           payload: { shotId: id, ratio: videoRatio },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();
@@ -336,6 +339,7 @@ export function ShotCard({
           action: "single_video_prompt",
           payload: { shotId: id },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();
@@ -356,6 +360,7 @@ export function ShotCard({
           action: generationMode === "reference" ? "single_reference_video" : "single_video_generate",
           payload: { shotId: id, ratio: videoRatio },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();
@@ -375,6 +380,7 @@ export function ShotCard({
           action: "single_shot_rewrite",
           payload: { shotId: id },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();
@@ -659,12 +665,14 @@ export function ShotCard({
           action: "single_ref_image_generate",
           payload: { shotId: id, refImageId: refId, ratio: videoRatio },
           modelConfig,
+          episodeId,
         }),
       });
       if (!resp.ok) throw new Error("Failed");
       onUpdate();
-    } catch {
-      toast.error(t("common.generationFailed"));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(msg.includes("余额") || msg.includes("quota") || msg.includes("insufficient") ? msg : t("common.generationFailed"));
     } finally {
       setRegeneratingRefIds((prev) => {
         const next = new Set(prev);
@@ -685,13 +693,15 @@ export function ShotCard({
           action: "single_ref_image_generate_all",
           payload: { shotId: id, ratio: videoRatio },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       if (!resp.ok) throw new Error("Failed");
       onUpdate();
       toast.success(t("common.generationCompleted"));
-    } catch {
-      toast.error(t("common.generationFailed"));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(msg.includes("余额") || msg.includes("quota") || msg.includes("insufficient") ? msg : t("common.generationFailed"));
     }
     setGeneratingSceneFrame(false);
   }

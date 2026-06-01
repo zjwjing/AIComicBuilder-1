@@ -42,6 +42,7 @@ interface ShotDrawerProps {
   onShotChange: (id: string) => void;
   onUpdate: () => void;
   projectId: string;
+  episodeId?: string | null;
   generationMode: "keyframe" | "reference" | "4grid";
   videoRatio: string;
   selectedVersionId: string | null;
@@ -55,6 +56,7 @@ export function ShotDrawer({
   onShotChange,
   onUpdate,
   projectId,
+  episodeId,
   generationMode,
   videoRatio,
   selectedVersionId,
@@ -181,6 +183,7 @@ export function ShotDrawer({
           action: "single_frame_generate",
           payload: { shotId: shot!.id, ratio: videoRatio, versionId: selectedVersionId },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();
@@ -202,6 +205,7 @@ export function ShotDrawer({
           action: "single_scene_frame",
           payload: { shotId: shot!.id, versionId: selectedVersionId },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();
@@ -222,6 +226,7 @@ export function ShotDrawer({
           action: "single_video_prompt",
           payload: { shotId: shot!.id, versionId: selectedVersionId },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();
@@ -243,6 +248,7 @@ export function ShotDrawer({
           action: generationMode === "reference" ? "single_reference_video" : "single_video_generate",
           payload: { shotId: shot!.id, ratio: videoRatio, versionId: selectedVersionId },
           modelConfig: getModelConfig(),
+          episodeId,
         }),
       });
       onUpdate();

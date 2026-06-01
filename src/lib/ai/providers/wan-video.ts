@@ -4,7 +4,7 @@ import path from "node:path";
 import { id as genId } from "@/lib/id";
 
 // Convert a local file path to a data: URL; http(s) URLs are returned as-is
-function toImageUrl(imagePathOrUrl: string): string {
+export function toImageUrl(imagePathOrUrl: string): string {
   if (imagePathOrUrl.startsWith("http://") || imagePathOrUrl.startsWith("https://")) {
     return imagePathOrUrl;
   }
@@ -22,7 +22,7 @@ function toImageUrl(imagePathOrUrl: string): string {
 }
 
 // Map ratio string to wan2.6 size string
-function ratioToSize(ratio: string): string {
+export function ratioToSize(ratio: string): string {
   const map: Record<string, string> = {
     "16:9": "1280*720",
     "9:16": "720*1280",
@@ -34,7 +34,7 @@ function ratioToSize(ratio: string): string {
 }
 
 // Normalise ratio to one of the values accepted by wan2.7
-function normaliseRatio(ratio: string): string {
+export function normaliseRatio(ratio: string): string {
   const supported = ["16:9", "9:16", "1:1", "4:3", "3:4"];
   return supported.includes(ratio) ? ratio : "16:9";
 }
@@ -139,7 +139,7 @@ export class WanVideoProvider implements VideoProvider {
 
   // ── Body builders ──────────────────────────────────────────────────────────
 
-  private buildKeyframeBody(
+  buildKeyframeBody(
     params: VideoGenerateParams & { firstFrame: string; lastFrame: string }
   ): Record<string, unknown> {
     if (this.isWan27) {
@@ -175,7 +175,7 @@ export class WanVideoProvider implements VideoProvider {
     };
   }
 
-  private buildReferenceBody(
+  buildReferenceBody(
     params: VideoGenerateParams & { initialImage: string }
   ): Record<string, unknown> {
     if (this.isWan27) {
@@ -218,7 +218,7 @@ export class WanVideoProvider implements VideoProvider {
     };
   }
 
-  private buildTextBody(params: VideoGenerateParams): Record<string, unknown> {
+  buildTextBody(params: VideoGenerateParams): Record<string, unknown> {
     // Choose t2v variant: wan2.7-t2v for wan2.7 base, otherwise use model as-is
     const model = this.isWan27 ? "wan2.7-t2v" : this.model;
 

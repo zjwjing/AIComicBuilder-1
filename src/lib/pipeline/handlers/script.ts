@@ -14,6 +14,7 @@ import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { TEMPERATURE_GENERAL, TEMPERATURE_CREATIVE } from "@/lib/config/defaults";
 import { buildScriptGeneratePrompt } from "@/lib/ai/prompts/script-generate";
 import { buildScriptParsePrompt } from "@/lib/ai/prompts/script-parse";
+import { buildVisualStylePromptLead } from "@/lib/visual-style";
 
 export async function handleScriptOutlineAction(
   projectId: string,
@@ -23,6 +24,7 @@ export async function handleScriptOutlineAction(
   episodeId?: string
 ) {
   const idea = (payload?.idea as string) || "";
+  const visualStyleLead = buildVisualStylePromptLead(undefined, idea);
   if (!idea.trim()) {
     return NextResponse.json({ error: "No idea provided" }, { status: 400 });
   }
@@ -33,7 +35,7 @@ export async function handleScriptOutlineAction(
     try {
       const agentStream = await callAgentStream(
         { platform: boundAgent.platform as "bailian" | "dify" | "coze", appId: boundAgent.appId, apiKey: boundAgent.apiKey },
-        `创意构想：${idea}`,
+        `${visualStyleLead ? `${visualStyleLead}\n\n` : ""}创意构想：${idea}`,
       );
       // TransformStream: accumulate chunks, save to DB in flush (tied to response lifecycle)
       const decoder = new TextDecoder();
@@ -82,7 +84,7 @@ export async function handleScriptOutlineAction(
   const result = streamText({
     model,
     system: outlineSystem,
-    prompt: `创意构想：${idea}`,
+    prompt: `${visualStyleLead ? `${visualStyleLead}\n\n` : ""}创意构想：${idea}`,
     temperature: TEMPERATURE_GENERAL,
     onFinish: async ({ text }) => {
       try {
@@ -137,10 +139,14 @@ export async function handleScriptGenerate(
   const sgBoundAgent = await findBoundAgent(projectId, "script_generate");
   if (sgBoundAgent) {
     try {
+      const visualStyleLead = buildVisualStylePromptLead(undefined, idea);
       const outline = (payload?.outline as string) || "";
-      const agentPrompt = outline
+      const basePrompt = outline
         ? `创意构想：${idea}\n\n故事大纲：${outline}`
         : `创意构想：${idea}`;
+      const agentPrompt = visualStyleLead
+        ? `${visualStyleLead}\n\n${basePrompt}`
+        : basePrompt;
       const agentStream = await callAgentStream(
         { platform: sgBoundAgent.platform as "bailian" | "dify" | "coze", appId: sgBoundAgent.appId, apiKey: sgBoundAgent.apiKey },
         agentPrompt,

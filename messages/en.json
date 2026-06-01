@@ -375,7 +375,9 @@
       "shotSplitReferenceAssets": "Shot · Reference Image Prompts",
       "shotSplitReferenceAssetsDesc": "Generate reference image prompts from existing shot metadata",
       "videoGenerate4Grid": "4-Grid · Video Prompt Template",
-      "videoGenerate4GridDesc": "LTX 2.3 4-grid mode: prompt template for four-panel storyboard video generation"
+      "videoGenerate4GridDesc": "LTX 2.3 4-grid mode: prompt template for four-panel storyboard video generation",
+      "battleChoreography": "Fight Scene Prompt Templates",
+      "battleChoreographyDesc": "Movie-grade martial arts shot prompts for keyframe / reference image generation"
     },
     "editor": {
       "slotMode": "Slots",
@@ -534,7 +536,17 @@
       "structureTemplate": "4-Panel Structure Template",
       "structureTemplateDesc": "Layout template for PANEL 1-4, supports {{PLACEHOLDER}} variables",
       "qualityRules": "Quality Rules",
-      "qualityRulesDesc": "LTX 2.3 generation quality and style rules"
+      "qualityRulesDesc": "LTX 2.3 generation quality and style rules",
+      "strikePreparation": "Strike Preparation",
+      "strikePreparationDesc": "Punch / kick / weapon wind-up and anticipation prompts",
+      "impactMoments": "Impact Moments",
+      "impactMomentsDesc": "Fist / kick / elbow / knee contact and hit reaction prompts",
+      "movementRepositioning": "Movement & Repositioning",
+      "movementRepositioningDesc": "Dodge / roll / advance / retreat / flip repositioning prompts",
+      "injuryDepiction": "Injury Depiction",
+      "injuryDepictionDesc": "Bruise / blood / fracture / wound visual injury prompts",
+      "weaponCombat": "Weapon Combat",
+      "weaponCombatDesc": "Sword / blade / staff / spear / knife combat action prompts"
     }
   }
 }

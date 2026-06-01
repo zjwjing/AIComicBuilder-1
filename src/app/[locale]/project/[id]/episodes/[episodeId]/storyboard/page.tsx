@@ -18,6 +18,7 @@ import {
 import { useEpisodeStore } from "@/stores/episode-store";
 import { useModelStore } from "@/stores/model-store";
 import { ShotCard } from "@/components/editor/shot-card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useTranslations, useLocale } from "next-intl";
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -37,6 +38,7 @@ import {
   List,
   ChevronDown,
   GitCompare,
+  Binary,
 } from "lucide-react";
 import { InlineModelPicker } from "@/components/editor/model-selector";
 import { VideoRatioPicker } from "@/components/editor/video-ratio-picker";
@@ -47,16 +49,21 @@ import { ShotDrawer } from "@/components/editor/shot-drawer";
 import { CharactersInlinePanel } from "@/components/editor/characters-inline-panel";
 import { ShotKanban } from "@/components/editor/shot-kanban";
 import { VersionCompare } from "@/components/editor/version-compare";
+import { VideoModelStrategyBadge } from "@/components/editor/video-model-strategy-badge";
+import { VisualStyleBadge } from "@/components/editor/visual-style-badge";
 import { PromptEditButton } from "@/components/prompt-templates/prompt-edit-button";
 import { AgentPicker } from "@/components/agent-picker";
 import { NewVersionDialog } from "@/components/editor/new-version-dialog";
+import { CanvasStoryboard } from "@/components/canvas/canvas-storyboard";
+import { AgentChat } from "@/components/canvas/agent-chat";
+import { useCanvasStore } from "@/stores/canvas-store";
 import Link from "next/link";
 
 export default function EpisodeStoryboardPage() {
   const t = useTranslations();
   const locale = useLocale();
   const params = useParams<{ id: string; episodeId: string }>();
-  const { project, fetchProject } = useProjectStore();
+  const { project, fetchProject, loadedProjectKey } = useProjectStore();
   const getModelConfig = useModelStore((s) => s.getModelConfig);
   const [generating, setGenerating] = useState(false);
   const [generatingFrames, setGeneratingFrames] = useState(false);
@@ -71,14 +78,21 @@ export default function EpisodeStoryboardPage() {
   const versions = project?.versions ?? [];
   const [_selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [openDrawerShotId, setOpenDrawerShotId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
+  const [viewMode, setViewMode] = useState<"list" | "kanban" | "canvas">("list");
 
   // Layout fetches lightweight data (no shots); re-fetch full data here
   useEffect(() => {
-    if (project && project.shots && project.shots.length === 0 && params.id && params.episodeId) {
+    if (
+      project &&
+      project.shots &&
+      project.shots.length === 0 &&
+      params.id &&
+      params.episodeId &&
+      loadedProjectKey !== `${params.id}:${params.episodeId}::full`
+    ) {
       fetchProject(params.id, params.episodeId);
     }
-  }, [project?.shots?.length, params.id, params.episodeId, fetchProject]);
+  }, [project?.shots?.length, params.id, params.episodeId, fetchProject, loadedProjectKey]);
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const versionDropdownRef = useRef<HTMLDivElement>(null);
   const [batchProgress, setBatchProgress] = useState<{
@@ -104,7 +118,7 @@ export default function EpisodeStoryboardPage() {
   }, [project?.id, episodeStoreEpisodes.length, fetchEpisodes]);
 
 
-  function switchView(mode: "list" | "kanban") {
+  function switchView(mode: "list" | "kanban" | "canvas") {
     setViewMode(mode);
     if (project) localStorage.setItem(`storyboardView:${project.id}`, mode);
   }
@@ -116,7 +130,7 @@ export default function EpisodeStoryboardPage() {
   useEffect(() => {
     if (!project?.id) return;
     const stored = localStorage.getItem(`storyboardView:${project.id}`);
-    if (stored === "list" || stored === "kanban") setViewMode(stored);
+    if (stored === "list" || stored === "kanban" || stored === "canvas") setViewMode(stored);
   }, [project?.id]);
 
   // Derived: if user's selection is valid keep it, otherwise fall back to latest
@@ -209,7 +223,7 @@ export default function EpisodeStoryboardPage() {
   const drawerShots = project.shots;
 
   async function handleGenerateShots() {
-    if (!project) return;
+    if (!project?.id) return;
     if (!textGuard()) return;
     setGenerating(true);
 
@@ -242,7 +256,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleBatchGenerateFrames(overwrite = false) {
-    if (!project) return;
+    if (!project?.id) return;
     if (!imageGuard()) return;
     setGeneratingFramesOverwrite(overwrite);
     setGeneratingFrames(true);
@@ -286,7 +300,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleBatchGenerateVideos(overwrite = false) {
-    if (!project) return;
+    if (!project?.id) return;
     if (!videoGuard()) return;
     setGeneratingVideosOverwrite(overwrite);
     setGeneratingVideos(true);
@@ -330,7 +344,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleBatchGenerateSceneFrames(overwrite = false) {
-    if (!project) return;
+    if (!project?.id) return;
     if (!imageGuard()) return;
     setSceneFramesOverwrite(overwrite);
     setGeneratingSceneFrames(true);
@@ -374,7 +388,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleGenerateRefPrompts() {
-    if (!project) return;
+    if (!project?.id) return;
     if (!textGuard()) return;
     setGeneratingRefPrompts(true);
     try {
@@ -401,7 +415,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleGenerateKeyframeAssets() {
-    if (!project) return;
+    if (!project?.id) return;
     if (!textGuard()) return;
     setGeneratingKeyframeAssets(true);
     try {
@@ -428,7 +442,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleBatchGenerateVideoPrompts() {
-    if (!project) return;
+    if (!project?.id) return;
     setGeneratingVideoPrompts(true);
     setLastBatchAction("batch_video_prompt");
 
@@ -469,7 +483,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleBatchGenerateReferenceVideos(overwrite = false) {
-    if (!project) return;
+    if (!project?.id) return;
     if (!videoGuard()) return;
     setGeneratingVideosOverwrite(overwrite);
     setGeneratingVideos(true);
@@ -513,7 +527,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleRetryFailed() {
-    if (!project) return;
+    if (!project?.id) return;
     const failedShots = project.shots.filter((s) => lastFailedShots.includes(s.id));
     if (failedShots.length === 0) return;
 
@@ -577,7 +591,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleResetStuckShots() {
-    if (!project) return;
+    if (!project?.id) return;
     try {
       const response = await apiFetch(`/api/projects/${project.id}/generate`, {
         method: "POST",
@@ -600,7 +614,7 @@ export default function EpisodeStoryboardPage() {
   }
 
   async function handleAutoRun() {
-    if (!project) return;
+    if (!project?.id) return;
     if (!confirm(t("project.autoRunConfirm"))) return;
 
     const shots = project.shots;
@@ -641,9 +655,16 @@ export default function EpisodeStoryboardPage() {
             <h2 className="font-display text-xl font-bold tracking-tight text-[--text-primary]">
               {t("project.storyboard")}
             </h2>
-            <p className="text-xs text-[--text-muted]">
-              {totalShots} shots
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-[--text-muted]">
+                {totalShots} shots
+              </p>
+              <VisualStyleBadge idea={project?.idea} script={project?.script} />
+              <VideoModelStrategyBadge />
+            </div>
+            <div className="mt-1">
+              <VideoModelStrategyBadge showLabel={false} showHint />
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -693,6 +714,17 @@ export default function EpisodeStoryboardPage() {
               >
                 <LayoutGrid className={`h-3.5 w-3.5 ${viewMode === "kanban" ? "text-primary" : ""}`} />
                 {t("project.viewKanban")}
+              </button>
+              <button
+                onClick={() => switchView("canvas")}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all duration-150 ${
+                  viewMode === "canvas"
+                    ? "bg-white text-primary shadow ring-1 ring-primary/20"
+                    : "text-[--text-muted] hover:bg-white/60 hover:text-[--text-secondary]"
+                }`}
+              >
+                <Binary className={`h-3.5 w-3.5 ${viewMode === "canvas" ? "text-primary" : ""}`} />
+                Canvas
               </button>
             </div>
           )}
@@ -1097,6 +1129,8 @@ export default function EpisodeStoryboardPage() {
             {t("shot.noShots")}
           </p>
         </div>
+      ) : viewMode === "canvas" ? (
+        <CanvasView project={project} />
       ) : viewMode === "kanban" ? (
         <ShotKanban
           shots={project.shots}
@@ -1120,6 +1154,7 @@ export default function EpisodeStoryboardPage() {
               key={shot.id}
               shot={shot}
               projectId={project.id}
+              episodeId={currentEpisodeId}
               onUpdate={() => fetchProject(project.id, useProjectStore.getState().currentEpisodeId!)}
               generationMode={generationMode}
               videoRatio={videoRatio}
@@ -1176,6 +1211,7 @@ export default function EpisodeStoryboardPage() {
           onShotChange={(id) => setOpenDrawerShotId(id)}
           onUpdate={() => fetchProject(project.id, useProjectStore.getState().currentEpisodeId!)}
           projectId={project.id}
+          episodeId={currentEpisodeId}
           generationMode={generationMode}
           videoRatio={videoRatio}
           selectedVersionId={selectedVersionId}
@@ -1192,6 +1228,22 @@ export default function EpisodeStoryboardPage() {
         nextVersionNum={nextVersionNum}
         generating={generating}
       />
+    </div>
+  );
+}
+
+function CanvasView({ project }: { project: NonNullable<ReturnType<typeof useProjectStore.getState>["project"]> }) {
+  const selectedShotId = useCanvasStore((s) => s.selectedShotId);
+  return (
+    <div className="relative flex h-[calc(100vh-220px)] overflow-hidden rounded-xl border">
+      <div className="flex-1">
+        <CanvasStoryboard shots={project.shots} />
+      </div>
+      <div className="w-80 flex-shrink-0">
+        <AgentChat
+          shot={(selectedShotId ? project.shots.find((s) => s.id === selectedShotId) : null) ?? null}
+        />
+      </div>
     </div>
   );
 }

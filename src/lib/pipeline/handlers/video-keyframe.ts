@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { shots, characters, dialogues } from "@/lib/db/schema";
+import { shots, characters, dialogues, projects, episodes } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -17,6 +17,8 @@ import { resolveVideoProvider } from "@/lib/ai/provider-factory";
 import { resolveSlotContents } from "@/lib/ai/prompts/resolver";
 import { buildVideoPrompt } from "@/lib/ai/prompts/video-generate";
 import { enhanceVideoPrompt } from "@/lib/ai/prompts/video-enhance";
+import { inferVideoPromptFamily } from "@/lib/ai/video-model-strategy";
+import { buildVisualStyleContext } from "@/lib/visual-style";
 
 import {
   loadShotLegacyView,
@@ -49,6 +51,11 @@ async function build4GridPrompt(slotKey: string, userId: string, projectId: stri
   const p2 = replacements["PANEL2_DESC"] ?? "";
   const p3 = replacements["PANEL3_DESC"] ?? "";
   const p4 = replacements["PANEL4_DESC"] ?? "";
+  const vs = replacements["VISUAL_STYLE"];
+  const mf = replacements["MODEL_FAMILY"];
+  const styleLine = vs
+    ? `Visual style: ${vs}${mf ? ` | Model strategy: ${mf}` : ""}`
+    : `Style: cinematic sequential storytelling, consistent characters and lighting across all panels`;
   return `[FOUR-PANEL GRID STORYBOARD]
 PANEL 1 (开场): ${p1}
 PANEL 2 (发展): ${p2}
@@ -58,7 +65,7 @@ PANEL 4 (收束): ${p4}
 Scene context: ${replacements["SCENE_CONTEXT"] ?? ""}
 Camera direction: ${replacements["CAMERA_DIRECTION"] ?? ""}
 Duration: ${replacements["DURATION"] ?? ""} seconds
-Style: cinematic sequential storytelling, consistent characters and lighting across all panels`;
+${styleLine}`;
 }
 
 export async function handleSingleVideoGenerate(
@@ -127,6 +134,11 @@ export async function handleSingleVideoGenerate(
     const videoModelId = modelConfig?.video?.modelId;
     const videoMaxDuration = getModelMaxDuration(videoModelId);
     const effectiveDuration = Math.min(shot.duration ?? DEFAULT_SHOT_DURATION, videoMaxDuration);
+    const promptFamily = inferVideoPromptFamily(modelConfig);
+    const scriptSource = shot.episodeId
+      ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, shot.episodeId))
+      : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
+    const visualStyle = buildVisualStyleContext(scriptSource[0]?.script || "", scriptSource[0]?.idea || "");
 
     const videoScript = shot.videoScript || shot.motionScript || shot.prompt || "";
     const videoContextForDialogue = videoScript;
@@ -151,24 +163,26 @@ export async function handleSingleVideoGenerate(
       duration: effectiveDuration,
       characters: shotCharacters,
       dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+      visualStyle: visualStyle || undefined,
+      family: promptFamily,
       slotContents: videoSlots,
     });
 
+    const fourGridPrompt = await build4GridPrompt("video_generate_4grid", userId, projectId, {
+      PANEL1_DESC: shotView.startFrameDesc || shot.prompt || videoScript,
+      PANEL2_DESC: shot.motionScript || videoScript,
+      PANEL3_DESC: shot.prompt || videoScript,
+      PANEL4_DESC: shotView.endFrameDesc || videoScript,
+      SCENE_CONTEXT: videoScript,
+      CAMERA_DIRECTION: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
+      DURATION: String(effectiveDuration),
+      SHOT_CHARACTERS: shotCharacters.map((c) => c.name).join(", "),
+      DIALOGUES: dialogueList.length > 0 ? dialogueList.map((d) => `${d.characterName}: "${d.text}"`).join("\n") : "",
+      VISUAL_STYLE: visualStyle || "",
+      MODEL_FAMILY: promptFamily || "",
+    });
     const videoPrompt = is4Grid
-      ? await enhanceVideoPrompt(
-          await build4GridPrompt("video_generate_4grid", userId, projectId, {
-            PANEL1_DESC: shotView.startFrameDesc || shot.prompt || videoScript,
-            PANEL2_DESC: shot.motionScript || videoScript,
-            PANEL3_DESC: shot.prompt || videoScript,
-            PANEL4_DESC: shotView.endFrameDesc || videoScript,
-            SCENE_CONTEXT: videoScript,
-            CAMERA_DIRECTION: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
-            DURATION: String(effectiveDuration),
-            SHOT_CHARACTERS: shotCharacters.map((c) => c.name).join(", "),
-            DIALOGUES: dialogueList.length > 0 ? dialogueList.map((d) => `${d.characterName}: "${d.text}"`).join("\n") : "",
-          }),
-          modelConfig,
-        )
+      ? await enhanceVideoPrompt(fourGridPrompt, modelConfig, "four_grid")
       : await enhanceVideoPrompt(basePrompt, modelConfig);
 
     const fourGridRefs = is4Grid
@@ -193,27 +207,7 @@ export async function handleSingleVideoGenerate(
       ...(fourGridRefs ? { referenceImages: fourGridRefs } : {}),
     });
 
-    // Trim tail-end panel flash for 4-grid videos
     let videoPath = result.filePath;
-    if (is4Grid && videoPath) {
-      try {
-        const duration = execSync(
-          `ffprobe -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`,
-          { timeout: 10000, encoding: "utf-8" },
-        ).trim();
-        const dur = parseFloat(duration);
-        if (dur > 2) {
-          const trimmed = videoPath.replace(/\.mp4$/, "_trimmed.mp4");
-          execSync(
-            `ffmpeg -i "${videoPath}" -t ${dur - 1.5} -c copy -y "${trimmed}"`,
-            { timeout: 30000, stdio: "ignore" },
-          );
-          videoPath = trimmed;
-        }
-      } catch (e) {
-        console.warn("[SingleVideoGenerate] Trim failed, using original:", e);
-      }
-    }
 
     await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shotId));
 
@@ -308,6 +302,11 @@ export async function handleBatchVideoGenerate(
   const videoSlots = await resolveSlotContents("video_generate", { userId, projectId });
 
   const results: Array<{ shotId: string; sequence: number; status: "ok" | "error"; videoUrl?: string; error?: string; diagnostic?: { code: string; severity: "info" | "warning" | "error"; message: string; fix: string } }> = [];
+  const promptFamily = inferVideoPromptFamily(modelConfig);
+  const scriptSource = episodeId
+    ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, episodeId))
+    : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
+  const visualStyle = buildVisualStyleContext(scriptSource[0]?.script || "", scriptSource[0]?.idea || "");
   for (const shot of eligible) {
       try {
         const shotLegacy = allShotsLegacy.get(shot.id);
@@ -342,24 +341,26 @@ export async function handleBatchVideoGenerate(
           duration: effectiveDuration,
           characters: batchCharacters,
           dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+          visualStyle: visualStyle || undefined,
+          family: promptFamily,
           slotContents: videoSlots,
         });
 
+        const fourGridPrompt = await build4GridPrompt("video_generate_4grid", userId, projectId, {
+          PANEL1_DESC: shotLegacy?.startFrameDesc || shot.prompt || videoScript,
+          PANEL2_DESC: shot.motionScript || videoScript,
+          PANEL3_DESC: shot.prompt || videoScript,
+          PANEL4_DESC: shotLegacy?.endFrameDesc || videoScript,
+          SCENE_CONTEXT: videoScript,
+          CAMERA_DIRECTION: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
+          DURATION: String(effectiveDuration),
+          SHOT_CHARACTERS: batchCharacters.map((c) => c.name).join(", "),
+          DIALOGUES: dialogueList.length > 0 ? dialogueList.map((d) => `${d.characterName}: "${d.text}"`).join("\n") : "",
+          VISUAL_STYLE: visualStyle || "",
+          MODEL_FAMILY: promptFamily || "",
+        });
         const videoPrompt = is4Grid
-          ? await enhanceVideoPrompt(
-              await build4GridPrompt("video_generate_4grid", userId, projectId, {
-                PANEL1_DESC: shotLegacy?.startFrameDesc || shot.prompt || videoScript,
-                PANEL2_DESC: shot.motionScript || videoScript,
-                PANEL3_DESC: shot.prompt || videoScript,
-                PANEL4_DESC: shotLegacy?.endFrameDesc || videoScript,
-                SCENE_CONTEXT: videoScript,
-                CAMERA_DIRECTION: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
-                DURATION: String(effectiveDuration),
-                SHOT_CHARACTERS: batchCharacters.map((c) => c.name).join(", "),
-                DIALOGUES: dialogueList.length > 0 ? dialogueList.map((d) => `${d.characterName}: "${d.text}"`).join("\n") : "",
-              }),
-              modelConfig,
-            )
+          ? await enhanceVideoPrompt(fourGridPrompt, modelConfig, "four_grid")
           : await enhanceVideoPrompt(basePrompt, modelConfig);
 
         await db
@@ -380,26 +381,7 @@ export async function handleBatchVideoGenerate(
           ...(fourGridRefs ? { referenceImages: fourGridRefs } : {}),
         });
 
-        let videoPath = result.filePath;
-        if (is4Grid && videoPath) {
-          try {
-            const duration = execSync(
-              `ffprobe -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`,
-              { timeout: 10000, encoding: "utf-8" },
-            ).trim();
-            const dur = parseFloat(duration);
-            if (dur > 2) {
-              const trimmed = videoPath.replace(/\.mp4$/, "_trimmed.mp4");
-              execSync(
-                `ffmpeg -i "${videoPath}" -t ${dur - 1.5} -c copy -y "${trimmed}"`,
-                { timeout: 30000, stdio: "ignore" },
-              );
-              videoPath = trimmed;
-            }
-          } catch (e) {
-            console.warn("[BatchVideoGenerate] Trim failed, using original:", e);
-          }
-        }
+        const videoPath = result.filePath;
 
         await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shot.id));
 

@@ -99,8 +99,9 @@ export default function EpisodePreviewPage() {
       });
       await res.json();
     } catch (err) {
-      console.error("Video assemble error:", err);
-      toast.error(t("common.generationFailed"));
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Video assemble error:", msg);
+      toast.error(msg.includes("余额") || msg.includes("quota") || msg.includes("insufficient") ? msg : t("common.generationFailed"));
     }
     setAssembling(false);
     await fetchProject(project.id, useProjectStore.getState().currentEpisodeId!);

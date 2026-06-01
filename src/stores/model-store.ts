@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { id as genId } from "@/lib/id";
 
-export type Protocol = "openai" | "asxs" | "gemini" | "seedance" | "ucloud-seedance" | "kling" | "wan" | "dashscope" | "comfyui" | "sensenova" | "siliconflow" | "aivideo" | "nvidia" | "hidream" | "framepack" | "omnigen";
+export type Protocol = "openai" | "asxs" | "gemini" | "seedance" | "ucloud-seedance" | "kling" | "wan" | "dashscope" | "comfyui" | "sensenova" | "siliconflow" | "aivideo" | "nvidia" | "hidream" | "framepack" | "omnigen" | "agnes";
 export type Capability = "text" | "image" | "video";
 
 export interface Model {

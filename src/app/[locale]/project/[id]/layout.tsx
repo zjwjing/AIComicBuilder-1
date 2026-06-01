@@ -20,11 +20,12 @@ export default function ProjectLayout({
   const { id } = use(params);
   const t = useTranslations("common");
   const locale = useLocale();
-  const { project, loading, fetchProject } = useProjectStore();
+  const { project, loading, fetchProject, loadedProjectKey } = useProjectStore();
 
   useEffect(() => {
+    if (loadedProjectKey?.startsWith(`${id}:`)) return;
     fetchProject(id, undefined, undefined, true);
-  }, [id, fetchProject]);
+  }, [id, fetchProject, loadedProjectKey]);
 
   if (loading || !project) {
     return (

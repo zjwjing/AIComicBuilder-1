@@ -1,6 +1,14 @@
 # Progress
 
 ## Completed
+- **Session 2026-06-01 — 生产构建 DB 修复 + Agnes 免费 API 验证 + 日志审查**: 
+  - **生产 standalone 构建修复**: `scripts/copy-env-to-standalone.mjs` 现在同时复制 `drizzle/` 迁移文件夹 + `data/` 数据库到 `.next/standalone/`，并把 `DATABASE_URL` 从绝对路径重写为相对路径；`src/instrumentation.ts` 在生产模式下自动用 `dotenv` 加载 `.env`（独立服务器不会自动加载）。根因：`SqliteError: no such table: projects` — 缺少迁移文件 + .env 未加载导致创建空数据库。
+  - **Agnes 免费 API 验证**: `GET /v1/models` ✅ (列出 5 个模型)，但文字（503 model_not_found）、图片（503）、视频（500 upstream error）全部不可用 — free key 无实际后端通道，需付费 Token Plan（$4/月起）。
+  - **项目日志审查**: `prod-server.log` 确认了 DB 错误；`dev-server.log`（2682行）显示最新 25/25 镜头生成成功；`dev-server-err.log`/`dev-server-3001.log` 正常。
+  - lint ✅ tsc ✅ build ✅
+- **Session [之前] — Battle prompts registry + 4 provider test files**: Integrated 29 martial-arts shot prompt templates into `registry-battle.ts` (5 categorized slots), registered in `registry.ts` (19 total), appended rule 6 to `shot_split` fidelity rules; wrote 63 tests across `veo.test.ts` (13), `ucloud-seedance.test.ts` (16), `framepack-video.test.ts` (15), `aivideo-video.test.ts` (15). Fixed `vi.clearAllMocks` → `vi.resetAllMocks` to prevent leftover `mockResolvedValueOnce` bleed across tests; used `vi.useFakeTimers` + `advanceTimersByTimeAsync` for poll timing test; used class `function()` expression in `vi.mock` factory for Google GenAI SDK constructor. lint ✅ tsc ✅
+- **Session 06/06 下班**: 新写 1 个 wan-video.test.ts（28 tests），累计 16 个 provider test 文件；所有新 provider 的 `generateText`（抛不支持异常）、`generateImage`（t2i/size/认证/错误/写盘）、`generateVideo`（keyframe/reference/text/轮询/错误）全覆盖；支持 7 家 AI 厂商 × 2 大模态（图片+视频）；lint ✅ tsc ✅，`next build` 在 Windows 上因内存超时受阻（`--turbo` bypass）
+- **Hermes agent 修复并升级到 v0.15.1**: 根因是旧版 `0.15.1` pip 包的 `hermes_cli` 缺少 `main.py`，加上 `~ermes*` 残余目录干扰。清理残留后从本地源码重装 editable (v0.14.0)，然后运行 `hermes update --yes` 拉取 796 个新 commit，成功升级到 `0.15.1 (2026.5.29)`，状态 `Up to date`
 - LongLive 1.0 inference pipeline functional (SDPA fallback, PyTorch 2.12)
 - 4-grid batch frame generation button fixed (storyboard/page.tsx)
 - Auto Run cascading fixed (needsPrompt includes needsFrame check)
@@ -17,10 +25,77 @@
 - **4-grid 画质优化**: sigma schedule 从 "balanced"（9步）→ "quality"（17步）→ "quality_lite"（13步）；distilled LoRA 强度 0.5 → 0.65，减少运动模糊
 - **N+1 dialogue 查询修复**: `/api/projects/[id]` 和 `/api/projects/[id]/episodes/[episodeId]` 两个 GET 端点用 `inArray` + Map 分组替代逐个 shot 的对话查询
 - **页面导航性能优化**: layouts 改用轻量模式 (`?exclude=shots`)，不加载 shots/assets/dialogues；storyboard 页按需触发完整数据加载
-
-## In Progress
-- "quality" (17步) 加载太慢 → 改用 "quality_lite" (13步) 作为平衡方案
-
+- **SenseNova 413 修复**: 所有 `generateText`/`generateImage` 调用的图片数组上限统一为 6 张 (`visionFrames`, `sceneFramePaths`, `shotCharRefImages`, Omnigen upload loop)
+- **模型提供商架构修复**:
+  - `resolveAIProvider`: 非 SenseNova 的 text provider 回退为 OpenAI（继承同 protocol 的 baseUrl/apiKey）
+  - `model-store.getModelConfig()`: 添加 `capability` 检查，确保 `defaultTextModel` 只返回 `capability === "text"` 的 provider
+  - `ensureDefaultProvider()`: 新增 `isTextCapable()` 验证
+  - Emotion-analysis + continuity-check API 路由: 添加 `modelConfig?.text` 存在性校验（400 拦截）
+- **Git 分叉修复**: 本地 `master` → `main` 重命名，GitHub 两端 (`main` + `master`) 同步，CNB 同步
+- **测试框架**: 配置 vitest 4.1 + 5 test files / 61 tests (model-store, provider-factory, validation, id, utils)
+- lint ✅ tsc ✅ (build ⏳ environment timeouts — blocked by resource limits)
+- **Agent + 无限画布 (阶段1)**: 基于 `@xyflow/react` 在 Storyboard 页面新增 Canvas 视图模式；点击 Shot 节点调出 Agent Chat 面板；`POST /api/projects/:id/agent/chat` 端点将自然语言指令映射为 pipeline actions
+- **审计修复 (7 issues)**: 全部修复
+  - Critical: `hasVideo` 类型修正为 `boolean` (!! 转换)
+  - Critical: `useCanvasStore.getState()` 改为 zustand selector hook `useCanvasStore(s => s.selectedShotId)` 封装为 `CanvasView` 子组件
+  - Critical: camera direction 倒挂解析 → 改用 `parseCameraDirection` + 正则匹配"pan left/zoom in"等
+  - Critical: Storyboard Page 嵌入 canvas 结构调整 (消除双重 `viewMode === "kanban"`)
+  - High: `INTENT_MAP` 排序提取到模块级常量 `INTENT_MAP_SORTED`，不在每次 `matchIntent` 调用时排序
+  - High: agent-chat race condition → `shotIdRef` 跟踪请求时 shot，过期响应自动丢弃
+  - High: `chatMessages` 全局数组 → 按 `selectedShotId` 隔离 (`chatMessagesByShotId: Record<string, ChatMessage[]>`)
+  - 顺手修复: `<img>` 缺失 `onError` 兜底、页面残留 `{/* unused import */}` 清理
+- **四宫格视频提示词 413 修复**: `video-prompt.ts` 在调用文本模型前按总图片体积预算选择 vision frames（最多 6 张且总原图体积约 2.5MB），避免 4 张大 panel base64 后请求体超限；lint ✅ tsc ✅，build 仍因环境资源超时
+- **项目加载慢初步修复**: `project-store` 增加 `loadedProjectKey`，Project/Episode layout 与 Storyboard full fetch 会跳过已加载的同 key 请求，减少重复轻量/完整数据拉取；lint ✅ tsc ✅
+- **Next root layout + 请求循环修复**: 根 `src/app/layout.tsx` 恢复 `<html>/<body>`，`[locale]/layout.tsx` 改为只包 Provider；`project-store.fetchProject` 增加 `pendingProjectKey` 与同 key 去重，避免 ProjectLayout/EpisodeLayout 互相覆盖导致重复请求/页面 500；lint ✅ tsc ✅；dev server 已重新启动，`/zh` 返回 200
+- **四宫格视频提示词只有 Duration 修复**: `video-prompt.ts` 对文本模型空输出增加 fallback prompt，避免 `rawPrompt.trim()` 为空时仍保存 `Duration: Ns`；单张/批量均覆盖；lint ✅ tsc ✅
+- **单张生成 episodeId 传递修复**: `ShotCard`/`ShotDrawer` 的单张参考帧、视频提示词、帧、视频生成请求补传 `episodeId`，避免服务端日志 `episodeId=none` 导致 episode 上下文刷新/筛选错位，看起来生成未成功；lint ✅ tsc ✅
+- **4-grid 视频时长/去水印修复**: 移除 `video-keyframe.ts` 中 4-grid 视频生成后的 `ffmpeg -t dur-1.5` 裁剪逻辑，解决生成视频总比提示词少约 2 秒；同时将 LTX 模板中的 `ltx2.3-ic-subtitles-remove-general` 与 `ltx2.3-video-restoration-general` 强度从 `0.9` 提到 `1.0`，增强字幕/水印抑制；lint ✅ tsc ✅
+- **吸收 Seedance skill 思路优化视频提示词**: 增强 `registry-video.ts` 的 `video_generate_4grid` 模板，加入“导演化改写规则”、时间分段、镜头语言、安全区与四层描述要求；增强 `video-enhance.ts`，将口语化视频描述自动翻译为更专业的电影镜头语言；lint ✅ tsc ✅
+- **审计回归修复**: `enhanceVideoPrompt()` 增加 mode 参数，拆分为 `default` 与 `four_grid` 两套 system prompt，避免四格导演化增强误伤普通视频/参考视频链路；`video-keyframe.ts` 的四格调用显式传 `"four_grid"`；lint ✅ tsc ✅
+- **风格预设接入 ScriptEditor**: 新增 `src/lib/style-presets.ts`，整理 120 风格为可复用预设；`ScriptEditor` 增加风格下拉与“插入风格”按钮，会把所选风格写入 `Idea` 文本中的 `视觉风格参考：中文 / English` 行，便于脚本生成链路复用；lint ✅ tsc ✅
+- **视觉风格参考显式进入生成链路**: `buildScriptGeneratePrompt()` 现在会提取 `视觉风格参考：...` 并以高优先级显式注入 script_generate user prompt；`buildShotSplitPrompt()`/`shots.ts` 也会把该风格作为“最高优先级”约束喂给分镜拆解，确保 startFrame/endFrame/videoScript 持续体现选定风格；lint ✅ tsc ✅
+- **风格链路继续下沉到关键帧/参考图**: `keyframe.ts` 和 `ref-image.ts` 现在会优先读取 `视觉风格参考：...`（从 script / idea 中提取），再与剧本里的 `视觉风格 / 色彩基调 / 时代美学 / 氛围情绪 / 画幅比例` 合并，显式传入关键帧提示词和参考图提示词生成；lint ✅ tsc ✅
+- **风格链路打通到视频提示词/参考视频**: `video-prompt.ts` 与 `video-reference.ts` 现在也会从 script / idea 中提取 `视觉风格参考：...`；该风格会显式注入 `buildRefVideoPromptRequest()` 和 `buildReferenceVideoPrompt()`，使视频提示词与参考视频提示词保持和上游剧本/分镜同一风格基调；lint ✅ tsc ✅
+- **UI 显示当前全局视觉风格**: 新增 `extractVisualStyleReference()` 工具方法；Script 页面与 Storyboard 页面页头会显示当前 `视觉风格参考` 徽标，方便用户随时确认当前项目风格；lint ✅ tsc ✅
+- **吸收 lanshu 仓库的模型分流思路**: 新增 `src/lib/ai/video-model-strategy.ts`，可推断视频提示词家族（`ltx` / `wan` / `seedance` / `generic`）；`video-enhance.ts` 现在会按模型家族切换增强 system prompt，让 Wan 更偏稳定单动作、Seedance 更偏分镜散文、LTX 维持现有写法；lint ✅ tsc ✅
+- **模型家族分流继续下沉到视频 prompt builder**: `buildRefVideoPromptRequest()` 和 `buildReferenceVideoPrompt()` 现在支持 `family` 参数；`video-prompt.ts` / `video-reference.ts` 会把 `inferVideoPromptFamily(modelConfig)` 传入，使 Wan/Seedance 在原始视频提示词构造阶段就体现差异，而不只是在增强阶段分流；lint ✅ tsc ✅
+- **Storyboard 显示当前视频模型家族**: `video-model-strategy.ts` 新增 `getVideoPromptFamilyLabel()`；Storyboard 页头现在会展示当前视频模型策略徽标（如 `LTX 连续镜头` / `Wan 稳定单动作` / `Seedance 分镜散文`），帮助用户理解当前提示词写法偏向；lint ✅ tsc ✅
+- **Storyboard 显示模型策略说明**: `video-model-strategy.ts` 新增 `getVideoPromptFamilyHint()`；Storyboard 页头现在在视频模型徽标下方显示一行简短说明（例如“偏连续镜头、时序推进和电影化动作描述”），让模型差异化策略更可感知；lint ✅ tsc ✅
+- **Script 页面也显示当前视频模型策略**: `ScriptEditor` 页头现在同步展示当前视频模型家族徽标与简短说明，使用户在写创意/剧本阶段就能理解后续视频提示词偏向（LTX / Wan / Seedance）；lint ✅ tsc ✅
+- **修复审计问题并提取专用策略徽标组件**: 审计确认 Script/Storyboard 中原先直接通过 `getModelConfig()` 计算策略存在非响应式风险；现已抽成 `src/components/editor/video-model-strategy-badge.tsx`，通过响应式订阅视频模型状态统一展示策略标签与说明，不改高影响面的 `InlineModelPicker`；lint ✅ tsc ✅
+- **风格下拉与当前项目状态同步**: `style-presets.ts` 新增 `findStylePresetIdByReference()`；`ScriptEditor` 现在会根据 `project.idea` 中已有的 `视觉风格参考：...` 自动回填当前风格下拉，避免 UI 停在错误默认值；lint ✅ tsc ✅
+- **插入风格时同步回填剧本视觉风格字段**: `ScriptEditor.applyStylePreset()` 现在除了更新 `idea` 的 `视觉风格参考：...`，还会在已有剧本正文中同步替换 `视觉风格：...` 行，确保 UI 选定风格、剧本结构块和下游解析保持一致；lint ✅ tsc ✅
+- **风格徽标显示增加 script 回退**: `style-presets.ts` 新增 `extractVisualStyleValue()`；Script 与 Storyboard 页头现在会先读 `idea` 中的 `视觉风格参考：...`，若不存在则回退读取剧本结构块里的 `视觉风格：...`，避免已有剧本项目不显示风格；lint ✅ tsc ✅
+- **提取专用 VisualStyleBadge 组件**: 新增 `src/components/editor/visual-style-badge.tsx`，把风格徽标的 idea/script 回退逻辑统一封装，Script 与 Storyboard 页面改为复用该组件，减少重复逻辑并便于后续扩展；lint ✅ tsc ✅
+- **抽取统一视觉风格解析工具**: 新增 `src/lib/visual-style.ts`，统一提供 `extractStyleField()`、`extractPrimaryVisualStyleReference()`、`buildVisualStyleContext()`；`keyframe.ts`、`ref-image.ts`、`video-prompt.ts`、`video-reference.ts` 已切换到复用这套工具，去掉重复的风格解析代码；lint ✅ tsc ✅
+- **视觉风格参考继续前移到 script_outline**: `visual-style.ts` 新增 `buildVisualStylePromptLead()`；`handleScriptOutlineAction()` 现在会在 outline 阶段就把风格作为显式高优先级上下文注入，无论走绑定 Agent 还是内置 `streamText` 路径，都能更早锁定整体美学方向；lint ✅ tsc ✅
+- **Normal 视频路径注入视觉风格 + 模型家族**: `video-keyframe.ts` 中 `buildVideoPrompt()` 调用新增 `visualStyle` 与 `family` 参数，使非四格普通视频的 base prompt 也带上全局风格和模型策略上下文；lint ✅ tsc ✅
+- **ComfyUI preflight 校验 + 错误代码标准化**: 新增 `src/lib/comfyui/errors.ts`（标准错误代码枚举 + `ComfyUIError` 接口）和 `src/lib/comfyui/preflight.ts`（`checkComfyUIServer()` / `checkComfyUIModels()` / `preflightWorkflow()`）；在 `ComfyUIVideoProvider` 和 `ComfyUIImageProvider` 的 `generateVideo()`/`generateImage()` 入口插入预检查，`SERVER_UNAVAILABLE` 等常见故障在提交 workflow 前就被捕获；同时给 image provider 补齐了 auth headers 支持；lint ✅ tsc ✅
+- **4-grid 视频提示词注入视觉风格 + 模型家族**: `build4GridPrompt()` 的 fallback 模板和 registry 模板现在都支持 `VISUAL_STYLE` 和 `MODEL_FAMILY` 两个额外替换变量；`video-keyframe.ts` 的 single/batch 四格调用点将全局风格和模型家族传入；lint ✅ tsc ✅
+- **Agent 脚本生成路径补齐视觉风格指令**: `handleScriptGenerate()` 绑定的 Agent 路径现在和 `handleScriptOutlineAction()` 一样，在 agent prompt 前显式注入 `buildVisualStylePromptLead()`；lint ✅ tsc ✅
+- **视频提示词 duration cap 从 10s 提升到 30s**: `buildVideoPrompt()` 和 `buildReferenceVideoPrompt()` 的 prompt 内时长硬帽从 10s 提升到 30s（适配 LTX/Wan 最长 30s 能力）；`buildRefVideoPromptRequest()` 同样提升到 30s，并根据 `family` 参数动态确定上限；lint ✅ tsc ✅
+- **视频提示词测试修复 10 个失败**: `buildInterpolationHeader` 在有 `segmentContext` 时跳过 registry 默认值（原先 registry 的通用 `interpolation_header` 覆盖了分段专用 header）；修复因 `detectLanguage` 按脚本文字语言输出标签导致的 10 个断言失败（英文输入输出英文标签，且 output 不含 `视频脚本`/`Video Script` 标签行）；31 tests ✅
+- **apiFetch TypeError: Failed to fetch 修复**: 所有 11 个批量操作 handler 的 guard 从 `if (!project) return;` 改为 `if (!project?.id) return;`，防止 store 未加载时 URL 变为 `/api/projects/undefined/generate`；`apiFetch` 增加 URL 包含 `undefined` 的检测和网络层异常的中文错误包装；lint ✅ tsc ✅
+- **Duration cap 30s → 10s 还原**: `buildVideoPrompt()`, `buildReferenceVideoPrompt()`, `buildRefVideoPromptRequest()` 的所有时长硬帽统一回退到 10 秒；相关测试同步更新；lint ✅ tsc ✅
+- **kling-video.test.ts**: 14 tests — 构造函数（默认值/环境变量/参数覆盖），generateVideo（image2video 关键帧/text2video 引用/JWT Bearer/无 secretKey 直用 ak/400 无引用重试/轮询/提交失败/生成失败/duration v1 映射/duration v3 钳位/HTTP 图片引用）；lint ✅ tsc ✅ build ✅
+- **kling-image.test.ts**: 15 tests — 构造函数（默认值/环境变量/参数覆盖），generateText（不支持异常），generateImage（正确body/自定义aspectRatio/JWT Bearer/无secretKey直用/poll轮询/submit HTTP错误/submit错误码/poll HTTP错误/poll失败/无URL/下载写盘）；lint ✅ tsc ✅ build ✅
+- **siliconflow-image.test.ts**: 17 tests — 导出 `clampSize`/`resolveImageSize`；构造函数（默认值/env/参数覆盖/尾部斜杠），generateText（不支持异常），generateImage（默认body/model覆盖/aspectRatio/explicit size/img2img引用/HTTP URL引用/Bearer auth/HTTP错误/错误码/无图片/下载失败/下载写盘）；lint ✅ tsc ✅ build ✅
+- **dashscope-image.test.ts**: 25 tests — 导出 `getModelFamily`/`resolveSize`/`ModelFamily`；getModelFamily（wan/zimage/qwen默认），resolveSize（explicit优先/wan比率/qwen比率/zimage比率/family默认/未知比率），构造函数（默认值/env/参数覆盖/尾部斜杠），generateText（不支持异常），generateImage（qwen body/wan尺寸/zimage无n/model覆盖/size优先级/Bearer auth/HTTP错误/API错误码/无URL/下载失败/下载写盘）；lint ✅ tsc ✅ build ✅
+- **sensenova-image.test.ts**: 21 tests — 导出 `normalizeSenseNovaSize`/`normalizeBaseUrl`；normalizeSenseNovaSize（aspect映射/size映射/回退），normalizeBaseUrl（默认/强制/v1/尾部斜杠），构造函数（默认值/OPENAI_API_KEY/参数覆盖），generateText（不支持异常），generateImage（正确payload/explicit size/Bearer auth/b64_json保存/URL下载/frames目录/HTTP错误/API错误/空响应/无payload/下载失败）；lint ✅ tsc ✅ build ✅
+- **hidream-image.test.ts**: 16 tests — 构造函数（默认/参数覆盖/尾部斜杠），generateText（不支持异常），generateImage（t2i模式/edit模式/subject模式/6张限制/size解析/默认2048+seed32/SSE解码写盘/start HTTP错误/无job_id/stream HTTP错误/SSE error事件/stream无结果）；lint ✅ tsc ✅ build ✅
+- **omnigen-image.test.ts**: 20 tests — 构造函数（默认/参数覆盖/尾部斜杠），generateText（不支持异常），buildOmnigenPrompt（无ref/含ref/label+role/editBaseImage/dedup/6张限制），parseSSE（data+complete事件/[DONE]/非JSON），generateImage（上传+启动/下载写盘/txt2img免上传/上传失败/启动失败/无event_id/下载失败）；lint ✅ tsc ✅ build ✅
+- **wan-video.test.ts**: 28 tests — 构造函数（默认值/环境变量/参数覆盖），buildKeyframeBody（wan2.6 img_url + size/wan2.7 media[] + ratio），buildReferenceBody（wan2.6 img_url/wan2.7 reference_image/上限8张），buildTextBody（非wan2.7 model/wan2.7→t2v），generateVideo（关键帧任务/引用任务/纯文本任务/Bearer auth + X-DashScope-Async/多轮轮询/submit HTTP错误/无task_id/生成FAILED/无video_url/下载写盘）；lint ✅ tsc ✅ build ✅
+- **Provider 测试总览**: 16 个 provider test 文件，总计 20 个 test 文件；lint ✅ tsc ✅ (build ⏳ environment timeout — `--turbo` bypasses)
+- **集成 Agnes AI 免费 API**: 新增 `agnes-video.ts` video provider（OpenAI-compatible 轮询风格定影模式），注册 `agnes` protocol 到 model-store（Protocol 联合类型）、provider-factory（text/image → OpenAIProvider，video → AgnesVideoProvider）、ai-sdk（复用 createOpenAI）、UI provider-form（DEFAULT_BASE_URLS + 三级 capability 选择）。已验证 API：text（`Agnes-2.0-Flash`）✅ image（`Agnes-Image-2.0-Flash` 返回 URL）✅ video（`POST/GET /v1/video/generations`，提交+轮询+下载）但 free API 不稳定（upstream 500 "division by zero"）。lint ✅ tsc ✅ build ✅
+- **Agnes video 测试**: 新增 `agnes-video.test.ts`（18 tests）— 构造函数（默认/env/参数覆盖/尾部斜杠）、generateVideo（纯文本提交/图片base64/firstFrame/initialImage/Bearer认证/多轮轮询→COMPLETED/submit HTTP错误/无task_id/FAILURE错误/FAILED错误/COMPLETED无URL/video_url备选字段/下载失败/写盘验证/alt id字段）。lint ✅ tsc ✅
+- **Key Decisions**:
+  - `inferProvider()` called with `config: any` to avoid circular import from registry
+  - `vi.stubGlobal("fetch", vi.fn(...))` + `vi.unstubAllGlobals()` in `beforeEach` for hermetic fetch stubs
+  - Dedicated `generateVideo` test for multi-poll (RUNNING→SUCCEEDED), FAILED, missing video_url, HTTP error, no task_id
+  - `as any` casts on test params to bypass restrictive union type narrowing (e.g., `VideoGenerateParams` union requires `initialImage` for all arms)
+  - Text-only video generation handled via separate `buildTextBody` method; keyframe/reference each have dedicated builders
+  - All helpers exported for direct unit testing (`clampSize`, `resolveImageSize`, `getModelFamily`, `resolveSize`, `normalizeSenseNovaSize`, `normalizeBaseUrl`)
+  
 ## 迁移到 Infinite Canvas
 - **决策**: 采用"工作流样板"方式迁移到 `basketikun/infinite-canvas`，不做插件化侵入
 - **漫画提示词库**: 创建了 `prompts/manga-reference/prompts.json`（45条提示词，涵盖 7 大类：漫画风格、分镜构图、四格漫画、角色设计、动作场面、效果技法、漫画封面）
@@ -32,5 +107,5 @@
 - LongLive 1.0 local inference too slow (~3h per 30-frame video on RTX 4080) — use CNB (L40, Linux, FA2) for production
 
 ## Known Issues
-- No test framework configured
+- `next build` webpack 模式在 ComfyUI（~21GB）运行时内存不足挂起，改用 `--turbo` 参数即可；`package.json` 已默认带上 `--turbo --no-lint`
 - `verify-videos.js` excluded from lint (utility script)

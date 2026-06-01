@@ -2,6 +2,8 @@ import type { AIProvider, TextOptions, ImageOptions } from "../types";
 import fs from "node:fs";
 import path from "node:path";
 import { id as genId } from "@/lib/id";
+import { preflightWorkflow } from "@/lib/comfyui/preflight";
+import { ErrorCodes } from "@/lib/comfyui/errors";
 
 type ComfyPromptResponse = {
   prompt_id?: string;
@@ -36,11 +38,22 @@ export class ComfyUIImageProvider implements AIProvider {
   private baseUrl: string;
   private model: string;
   private uploadDir: string;
+  private authToken?: string;
+  private authCookie?: string;
 
-  constructor(params?: { baseUrl?: string; model?: string; uploadDir?: string }) {
+  constructor(params?: { baseUrl?: string; model?: string; uploadDir?: string; authToken?: string; authCookie?: string }) {
     this.baseUrl = (params?.baseUrl || process.env.COMFYUI_BASE_URL || "https://2wdf3izjfh-8188.cnb.run/").replace(/\/+$/, "");
     this.model = params?.model || "z-image-turbo-comfyui";
     this.uploadDir = params?.uploadDir || process.env.UPLOAD_DIR || "./uploads";
+    this.authToken = params?.authToken || process.env.COMFYUI_AUTH_TOKEN;
+    this.authCookie = params?.authCookie || process.env.COMFYUI_AUTH_COOKIE;
+  }
+
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (this.authToken) headers["Authorization"] = `Bearer ${this.authToken}`;
+    if (this.authCookie) headers["Cookie"] = this.authCookie;
+    return headers;
   }
 
   async generateText(_prompt: string, _options?: TextOptions): Promise<string> {
@@ -59,6 +72,7 @@ export class ComfyUIImageProvider implements AIProvider {
     const res = await fetch(`${this.baseUrl}/upload/image`, {
       method: "POST",
       body: form,
+      headers: this.getAuthHeaders(),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -305,7 +319,9 @@ export class ComfyUIImageProvider implements AIProvider {
     const maxAttempts = 120;
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      const res = await fetch(`${this.baseUrl}/history/${promptId}`);
+      const res = await fetch(`${this.baseUrl}/history/${promptId}`, {
+        headers: this.getAuthHeaders(),
+      });
       if (!res.ok) continue;
 
       const json = (await res.json()) as Record<string, ComfyHistoryRecord>;
@@ -321,6 +337,15 @@ export class ComfyUIImageProvider implements AIProvider {
   }
 
   async generateImage(prompt: string, options?: ImageOptions): Promise<string> {
+    const workflowFamily = this.model.includes("qwen-edit") ? "qwen-edit-dual" : "z-image-turbo-comfyui";
+    const preflightResult = await preflightWorkflow(this.baseUrl, workflowFamily, [], this.getAuthHeaders());
+    if (!preflightResult.ok) {
+      console.warn(`[ComfyUIImage] Preflight failed for ${this.model}:`, preflightResult.error);
+      if (preflightResult.error?.code === ErrorCodes.SERVER_UNAVAILABLE) {
+        throw new Error(`ComfyUI server unreachable: ${preflightResult.error.message}`);
+      }
+    }
+
     if (this.model.includes("qwen-edit")) {
       const baseImage = options?.editBaseImage || options?.referenceImages?.[0];
       if (!baseImage) {
@@ -334,7 +359,7 @@ export class ComfyUIImageProvider implements AIProvider {
 
       const submitRes = await fetch(`${this.baseUrl}/prompt`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...this.getAuthHeaders() },
         body: JSON.stringify({ prompt: workflow }),
       });
 
@@ -355,7 +380,9 @@ export class ComfyUIImageProvider implements AIProvider {
         subfolder: output.subfolder || "",
         type: output.type || "output",
       });
-      const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`);
+      const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
+        headers: this.getAuthHeaders(),
+      });
       if (!imageRes.ok) {
         throw new Error(`ComfyUI qwen-edit download failed: ${imageRes.status}`);
       }
@@ -375,7 +402,7 @@ export class ComfyUIImageProvider implements AIProvider {
 
     const submitRes = await fetch(`${this.baseUrl}/prompt`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...this.getAuthHeaders() },
       body: JSON.stringify({ prompt: workflow }),
     });
 
@@ -396,7 +423,9 @@ export class ComfyUIImageProvider implements AIProvider {
       subfolder: output.subfolder || "",
       type: output.type || "output",
     });
-    const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`);
+    const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
+      headers: this.getAuthHeaders(),
+    });
     if (!imageRes.ok) {
       throw new Error(`ComfyUI image download failed: ${imageRes.status}`);
     }

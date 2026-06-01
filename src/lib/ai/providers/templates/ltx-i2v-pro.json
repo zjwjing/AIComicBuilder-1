@@ -354,7 +354,7 @@
   "320:324": {
     "inputs": {
       "lora_name": "ltx2.3-ic-subtitles-remove-general.safetensors",
-      "strength_model": 0.9,
+      "strength_model": 1.0,
       "model": ["320:316", 0]
     },
     "class_type": "LoraLoaderModelOnly",
@@ -363,7 +363,7 @@
   "320:325": {
     "inputs": {
       "lora_name": "ltx2.3-video-restoration-general.safetensors",
-      "strength_model": 0.9,
+      "strength_model": 1.0,
       "model": ["320:324", 0]
     },
     "class_type": "LoraLoaderModelOnly",

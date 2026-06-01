@@ -11,6 +11,7 @@ import type { PromptDefinition } from "./registry-helpers";
 import { scriptOutlineDef, scriptGenerateDef, scriptParseDef, scriptSplitDef } from "./registry-script";
 import { characterExtractDef, importCharacterExtractDef, characterImageDef } from "./registry-character";
 import { shotSplitDef, shotKeyframeAssetsDef } from "./registry-shot";
+import { battleChoreographyDef } from "./registry-battle";
 import { frameGenerateFirstDef, frameGenerateLastDef, sceneFrameGenerateDef, refImagePromptsDef } from "./registry-frame";
 import { videoGenerateDef, refVideoGenerateDef, refVideoPromptDef, fourGridGenerateDef } from "./registry-video";
 
@@ -21,7 +22,7 @@ import { __setRegistryMap, getPromptDefinition, getDefaultSlotContents } from ".
 export const PROMPT_REGISTRY: PromptDefinition[] = [
   scriptOutlineDef, scriptGenerateDef, scriptParseDef, scriptSplitDef,
   characterExtractDef, importCharacterExtractDef, characterImageDef,
-  shotSplitDef, shotKeyframeAssetsDef,
+  shotSplitDef, shotKeyframeAssetsDef, battleChoreographyDef,
   frameGenerateFirstDef, frameGenerateLastDef, sceneFrameGenerateDef, refImagePromptsDef,
   videoGenerateDef, refVideoGenerateDef, refVideoPromptDef, fourGridGenerateDef,
 ];

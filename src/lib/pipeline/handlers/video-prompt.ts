@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import fs from "fs";
 import { db } from "@/lib/db";
 import { DEFAULT_SHOT_DURATION, DEFAULT_CAMERA_DIRECTION } from "@/lib/config/defaults";
-import { shots, characters, dialogues } from "@/lib/db/schema";
+import { shots, characters, dialogues, projects, episodes } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -17,9 +18,11 @@ import { extractJSON } from "@/lib/ai/ai-sdk";
 import { resolveAIProvider } from "@/lib/ai/provider-factory";
 import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildRefVideoPromptRequest } from "@/lib/ai/prompts/ref-video-prompt-generate";
+import { inferVideoPromptFamily } from "@/lib/ai/video-model-strategy";
 import { loadShotLegacyView, loadShotLegacyViewsBatch, type ShotLegacyView } from "@/lib/shot-asset-utils";
 import type { AgentCategory } from "@/lib/ai/agent-caller";
 import { diagnosticError } from "@/lib/pipeline/diagnostics";
+import { extractPrimaryVisualStyleReference } from "@/lib/visual-style";
 
 function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
@@ -31,6 +34,50 @@ function getPanelFrameInfos(frameCount: number, characterCount: number) {
     label: labels[i] ?? `PANEL ${i + 1}`,
     index: characterCount + i + 1,
   }));
+}
+
+const TEXT_VISION_MAX_IMAGES = 6;
+const TEXT_VISION_MAX_TOTAL_BYTES = 2_500_000;
+
+function selectTextVisionFrames(frames: string[]): string[] {
+  const selected: string[] = [];
+  let totalBytes = 0;
+
+  for (const frame of frames.slice(0, TEXT_VISION_MAX_IMAGES)) {
+    let size = 0;
+    try {
+      size = fs.statSync(frame).size;
+    } catch {
+      // Keep unreadable/non-local inputs so provider-level handling can decide.
+      selected.push(frame);
+      continue;
+    }
+
+    if (selected.length > 0 && totalBytes + size > TEXT_VISION_MAX_TOTAL_BYTES) {
+      continue;
+    }
+
+    selected.push(frame);
+    totalBytes += size;
+  }
+
+  return selected.length > 0 ? selected : frames.slice(0, 1);
+}
+
+function buildFallbackVideoPrompt(params: {
+  motionContext: string;
+  cameraDirection: string;
+  duration: number;
+  sceneFrames: ReturnType<typeof getPanelFrameInfos>;
+  dialogues?: Array<{ characterName: string; text: string }>;
+}): string {
+  const sceneFlow = params.sceneFrames
+    .map((f) => `@图片${f.index}（${f.label}）`)
+    .join(" → ");
+  const dialogueText = params.dialogues?.length
+    ? ` ${params.dialogues.map((d) => `${d.characterName}台词：${d.text}`).join("；")}`
+    : "";
+  return `${sceneFlow} 按顺序展开成一个连续镜头：${params.motionContext || "延续画面中的动作与情绪"}。镜头运动：${params.cameraDirection}，节奏控制在 ${Math.min(params.duration, 10)} 秒内，动作连贯自然，主体稳定，避免跳切。${dialogueText}`.trim();
 }
 
 export async function handleSingleVideoPrompt(
@@ -57,6 +104,13 @@ export async function handleSingleVideoPrompt(
     );
   }
   const shotView = await loadShotLegacyView(shot.id);
+  const promptFamily = inferVideoPromptFamily(modelConfig);
+  const scriptSource = shot.episodeId
+    ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, shot.episodeId))
+    : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
+  const script = scriptSource[0]?.script || "";
+  const idea = scriptSource[0]?.idea || "";
+  const visualStyleReference = extractPrimaryVisualStyleReference(script, idea);
 
   const genMode = await resolveGenerationMode(projectId, shot.episodeId);
 
@@ -150,13 +204,27 @@ export async function handleSingleVideoPrompt(
       characters: characterRefInfos,
       sceneFrames: sceneFrameInfos,
       dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+      visualStyle: visualStyleReference || undefined,
+      family: promptFamily,
     });
     console.log(`[SingleVideoPrompt] Shot ${shot.sequence} promptRequest:\n${promptRequest}`);
+    const textVisionFrames = selectTextVisionFrames(visionFrames);
+    console.log(`[SingleVideoPrompt] Shot ${shot.sequence}: sending ${textVisionFrames.length}/${visionFrames.length} frame(s) to text model`);
     const rawPrompt = await textProvider.generateText(promptRequest, {
       systemPrompt: refVideoSystem,
-      images: visionFrames.slice(0, 6),
+      images: textVisionFrames,
     });
-    const videoPrompt = `Duration: ${effectiveDuration}s.\n\n${rawPrompt.trim()}`;
+    const promptBody = rawPrompt.trim() || buildFallbackVideoPrompt({
+      motionContext,
+      cameraDirection: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
+      duration: effectiveDuration,
+      sceneFrames: sceneFrameInfos,
+      dialogues: dialogueList,
+    });
+    if (!rawPrompt.trim()) {
+      console.warn(`[SingleVideoPrompt] Shot ${shot.sequence}: text provider returned empty output, using fallback prompt`);
+    }
+    const videoPrompt = `Duration: ${effectiveDuration}s.\n\n${promptBody}`;
     console.log(`[SingleVideoPrompt] Shot ${shot.sequence} videoPrompt:\n${videoPrompt}`);
     await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shotId));
     return NextResponse.json({ shotId, videoPrompt, status: "ok" });
@@ -202,6 +270,10 @@ export async function handleBatchVideoPrompt(
       );
     }
     const vpAgentChars = await getEpisodeCharacters(projectId, episodeId);
+    const vpScriptSource = episodeId
+      ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, episodeId))
+      : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
+    const vpVisualStyleReference = extractPrimaryVisualStyleReference(vpScriptSource[0]?.script || "", vpScriptSource[0]?.idea || "");
     const vpPrompt = JSON.stringify({
       shots: vpAgentShots.map((s) => ({
         sequence: s.sequence,
@@ -212,6 +284,7 @@ export async function handleBatchVideoPrompt(
         duration: s.duration,
       })),
       characters: vpAgentChars.map((c) => ({ name: c.name, visualHint: c.visualHint })),
+      visualStyleReference: vpVisualStyleReference,
     }, null, 2);
 
     const agentResult = await callAndValidateAgent(vpBoundAgent, "video_prompts", vpPrompt);
@@ -251,6 +324,13 @@ export async function handleBatchVideoPrompt(
   if (episodeId) shotWhereConditions.push(eq(shots.episodeId, episodeId));
   const batchShots = await db.select().from(shots).where(and(...shotWhereConditions)).orderBy(asc(shots.sequence));
   const batchShotsLegacy = await loadShotLegacyViewsBatch(batchShots.map((s) => s.id));
+  const promptFamily = inferVideoPromptFamily(modelConfig);
+  const scriptSource = episodeId
+    ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, episodeId))
+    : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
+  const script = scriptSource[0]?.script || "";
+  const idea = scriptSource[0]?.idea || "";
+  const visualStyleReference = extractPrimaryVisualStyleReference(script, idea);
 
   const batchCharacters = await getEpisodeCharacters(projectId, episodeId);
 
@@ -352,12 +432,26 @@ export async function handleBatchVideoPrompt(
           characters: characterRefInfos,
           sceneFrames: sceneFrameInfos,
           dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+          visualStyle: visualStyleReference || undefined,
+          family: promptFamily,
         });
+        const textVisionFrames = selectTextVisionFrames(visionFrames);
+        console.log(`[BatchVideoPrompt] Shot ${shot.sequence}: sending ${textVisionFrames.length}/${visionFrames.length} frame(s) to text model`);
         const rawPrompt = await textProvider.generateText(promptRequest, {
           systemPrompt: refVideoSystem,
-          images: visionFrames.slice(0, 6),
+          images: textVisionFrames,
         });
-        const videoPrompt = `Duration: ${effectiveDuration}s.\n\n${rawPrompt.trim()}`;
+        const promptBody = rawPrompt.trim() || buildFallbackVideoPrompt({
+          motionContext,
+          cameraDirection: shot.cameraDirection || DEFAULT_CAMERA_DIRECTION,
+          duration: effectiveDuration,
+          sceneFrames: sceneFrameInfos,
+          dialogues: dialogueList,
+        });
+        if (!rawPrompt.trim()) {
+          console.warn(`[BatchVideoPrompt] Shot ${shot.sequence}: text provider returned empty output, using fallback prompt`);
+        }
+        const videoPrompt = `Duration: ${effectiveDuration}s.\n\n${promptBody}`;
         await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shot.id));
         console.log(`[BatchVideoPrompt] Shot ${shot.sequence} done (${((Date.now() - shotStart) / 1000).toFixed(1)}s, ${visionFrames.length} frames)`);
         return { shotId: shot.id, status: "ok" };

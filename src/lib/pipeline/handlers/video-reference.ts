@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { shots, characters, dialogues } from "@/lib/db/schema";
+import { shots, characters, dialogues, projects, episodes } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -18,6 +18,8 @@ import { resolvePrompt, resolveSlotContents } from "@/lib/ai/prompts/resolver";
 import { buildReferenceVideoPrompt } from "@/lib/ai/prompts/video-generate";
 import { buildRefVideoPromptRequest } from "@/lib/ai/prompts/ref-video-prompt-generate";
 import { enhanceVideoPrompt } from "@/lib/ai/prompts/video-enhance";
+import { inferVideoPromptFamily } from "@/lib/ai/video-model-strategy";
+import { extractPrimaryVisualStyleReference } from "@/lib/visual-style";
 
 import {
   loadShotLegacyView,
@@ -51,6 +53,13 @@ export async function handleSingleReferenceVideo(
     return NextResponse.json({ error: "Shot not found" }, { status: 404 });
   }
   const shotView = await loadShotLegacyView(shot.id);
+  const promptFamily = inferVideoPromptFamily(modelConfig);
+  const scriptSource = shot.episodeId
+    ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, shot.episodeId))
+    : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
+  const script = scriptSource[0]?.script || "";
+  const idea = scriptSource[0]?.idea || "";
+  const visualStyleReference = extractPrimaryVisualStyleReference(script, idea);
 
   const versionedUploadDir = await getVersionedUploadDir(shot.versionId);
 
@@ -162,6 +171,8 @@ export async function handleSingleReferenceVideo(
           characters: characterRefInfos,
           sceneFrames: sceneFrameInfos,
           dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+          visualStyle: visualStyleReference || undefined,
+          family: promptFamily,
           mode: isComfyUIVideoModel(modelConfig?.video) ? "comfyui" : "default",
         });
         console.log(`[SingleReferenceVideo] Shot ${shot.sequence} promptRequest:\n${promptRequest}`);
@@ -182,6 +193,7 @@ export async function handleSingleReferenceVideo(
             : effectiveDuration,
           characters: projectCharacters,
           dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+          visualStyle: visualStyleReference || undefined,
           slotContents: refVideoSlots,
         });
         const enhancedFallback = await enhanceVideoPrompt(fallback, modelConfig);
@@ -245,6 +257,13 @@ export async function handleBatchReferenceVideo(
     .from(shots)
     .where(and(...shotWhereConditions))
     .orderBy(asc(shots.sequence));
+  const promptFamily = inferVideoPromptFamily(modelConfig);
+  const scriptSource = episodeId
+    ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, episodeId))
+    : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
+  const script = scriptSource[0]?.script || "";
+  const idea = scriptSource[0]?.idea || "";
+  const visualStyleReference = extractPrimaryVisualStyleReference(script, idea);
 
   // Deduplicate by sequence: keep the first entry per sequence
   const seenSeq = new Set<number>();
@@ -375,6 +394,8 @@ export async function handleBatchReferenceVideo(
             characters: characterRefInfos,
             sceneFrames: sceneFrameInfos,
             dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+            visualStyle: visualStyleReference || undefined,
+            family: promptFamily,
             mode: isComfyUIVideoModel(modelConfig?.video) ? "comfyui" : "default",
           });
           const rawPrompt = await textProvider.generateText(promptRequest, {
@@ -394,6 +415,8 @@ export async function handleBatchReferenceVideo(
               : effectiveDuration,
             characters: projectCharacters,
             dialogues: dialogueList.length > 0 ? dialogueList : undefined,
+            visualStyle: visualStyleReference || undefined,
+            family: promptFamily,
             slotContents: refVideoSlots,
           });
           const enhancedFallback = await enhanceVideoPrompt(fallback, modelConfig);

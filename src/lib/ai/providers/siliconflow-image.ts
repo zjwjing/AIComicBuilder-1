@@ -15,7 +15,7 @@ const ASPECT_MAP: Record<string, string> = {
 
 const MAX_DIM = 2048;
 
-function clampSize(size: string): string {
+export function clampSize(size: string): string {
   const cleaned = size.replace("*", "x");
   const [wStr, hStr] = cleaned.split("x");
   let w = parseInt(wStr, 10);
@@ -28,7 +28,7 @@ function clampSize(size: string): string {
   return `${w}x${h}`;
 }
 
-function resolveImageSize(size?: string, aspectRatio?: string): string {
+export function resolveImageSize(size?: string, aspectRatio?: string): string {
   if (size) return clampSize(size);
   if (aspectRatio) return ASPECT_MAP[aspectRatio] || "1024x1024";
   return "1024x1024";

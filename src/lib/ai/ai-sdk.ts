@@ -28,7 +28,8 @@ export function createLanguageModel(config: ProviderConfig): LanguageModel {
     case "sensenova":
     case "dashscope":
     case "siliconflow":
-    case "nvidia": {
+    case "nvidia":
+    case "agnes": {
       const provider = createOpenAI({
         apiKey: config.apiKey,
         baseURL: config.baseUrl,

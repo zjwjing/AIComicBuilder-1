@@ -79,6 +79,8 @@ export function buildReferenceVideoPrompt(params: {
   duration?: number;
   characters?: CharacterRef[];
   dialogues?: Array<{ characterName: string; text: string; offscreen?: boolean; visualHint?: string }>;
+  visualStyle?: string;
+  family?: "ltx" | "wan" | "seedance" | "generic";
   slotContents?: Record<string, string>;
 }): string {
   const lang = detectLanguage(params.videoScript);
@@ -86,7 +88,7 @@ export function buildReferenceVideoPrompt(params: {
   const lines: string[] = [];
 
   if (params.duration) {
-    const capped = Math.min(params.duration, 10);
+    const capped = Math.min(params.duration, 15);
     lines.push(`${L.duration}${L.colon}${capped}s${L.period}`);
     lines.push(``);
   }
@@ -94,6 +96,25 @@ export function buildReferenceVideoPrompt(params: {
   const charLine = buildCharacterLine(params.characters, lang);
   if (charLine) {
     lines.push(`${L.characterAppearance}${L.colon}${charLine}${L.period}`);
+    lines.push(``);
+  }
+
+  if (params.visualStyle) {
+    lines.push(`${lang === "zh" ? "视觉风格" : "Visual Style"}${L.colon}${params.visualStyle}${L.period}`);
+    lines.push(``);
+  }
+
+  if (params.family === "wan") {
+    lines.push(lang === "zh"
+      ? "写作策略：保持主体稳定，动作单线推进，避免复杂跳切和多重视角突变。"
+      : "Writing strategy: keep the subject stable, use one continuous action line, avoid complex jump cuts and abrupt perspective changes.");
+    lines.push(``);
+  }
+
+  if (params.family === "seedance") {
+    lines.push(lang === "zh"
+      ? "写作策略：更像电影分镜散文，镜头运动、情绪外化和环境反应要具体，但整体保持自然流动。"
+      : "Writing strategy: cinematic storyboard prose, with concrete camera motion, emotional externalization, and environmental reactions while staying naturally flowing.");
     lines.push(``);
   }
 
@@ -145,11 +166,9 @@ function buildInterpolationHeader(
     ? "从起始帧到结束帧进行平滑插值。"
     : "Smoothly interpolate from the opening frame to the closing frame.";
 
-  if (!segmentContext) {
-    return resolveSlot(slotContents, "video_generate", "interpolation_header", defaultFull);
-  }
+  const hasSlotOverride = slotContents && slotContents["interpolation_header"];
 
-  if (segmentContext.total <= 1) {
+  if (!segmentContext || segmentContext.total <= 1) {
     return resolveSlot(slotContents, "video_generate", "interpolation_header", defaultFull);
   }
 
@@ -160,20 +179,26 @@ function buildInterpolationHeader(
     const firstHeader = lang === "zh"
       ? `【第1段/共${segmentContext.total}段】从起始帧开始，描述前${segmentContext.index + 1}段（共${segmentContext.total}段）中的第一段运动。`
       : `[Segment 1/${segmentContext.total}] Starting from the opening frame, describe the first segment of motion.`;
-    return resolveSlot(slotContents, "video_generate", "interpolation_header", firstHeader);
+    return hasSlotOverride
+      ? resolveSlot(slotContents, "video_generate", "interpolation_header", firstHeader)
+      : firstHeader;
   }
 
   if (isLast) {
     const lastHeader = lang === "zh"
       ? `【第${segmentContext.index + 1}段/共${segmentContext.total}段】最终段，从当前帧到结束帧完成剩余运动。`
       : `[Segment ${segmentContext.index + 1}/${segmentContext.total}] Final segment, complete the remaining motion from current frame to the closing frame.`;
-    return resolveSlot(slotContents, "video_generate", "interpolation_header", lastHeader);
+    return hasSlotOverride
+      ? resolveSlot(slotContents, "video_generate", "interpolation_header", lastHeader)
+      : lastHeader;
   }
 
   const midHeader = lang === "zh"
     ? `【第${segmentContext.index + 1}段/共${segmentContext.total}段】中间段，从当前帧继续推进，朝结束帧方向描述此段运动。`
     : `[Segment ${segmentContext.index + 1}/${segmentContext.total}] Mid segment, continue from the current frame toward the closing frame.`;
-  return resolveSlot(slotContents, "video_generate", "interpolation_header", midHeader);
+  return hasSlotOverride
+    ? resolveSlot(slotContents, "video_generate", "interpolation_header", midHeader)
+    : midHeader;
 }
 
 export function buildVideoPrompt(params: {
@@ -185,6 +210,8 @@ export function buildVideoPrompt(params: {
   duration?: number;
   characters?: CharacterRef[];
   dialogues?: Array<{ characterName: string; text: string; offscreen?: boolean; visualHint?: string }>;
+  visualStyle?: string;
+  family?: "ltx" | "wan" | "seedance" | "generic";
   slotContents?: Record<string, string>;
   segmentContext?: SegmentContext;
 }): string {
@@ -193,7 +220,7 @@ export function buildVideoPrompt(params: {
   const lines: string[] = [];
 
   if (params.duration) {
-    const capped = Math.min(params.duration, 10);
+    const capped = Math.min(params.duration, 15);
     lines.push(`${L.duration}${L.colon}${capped}s${L.period}`);
     lines.push(``);
   }
@@ -201,6 +228,25 @@ export function buildVideoPrompt(params: {
   const charLine = buildCharacterLine(params.characters, lang);
   if (charLine) {
     lines.push(`${L.characterAppearance}${L.colon}${charLine}${L.period}`);
+    lines.push(``);
+  }
+
+  if (params.visualStyle) {
+    lines.push(`${lang === "zh" ? "视觉风格" : "Visual Style"}${L.colon}${params.visualStyle}${L.period}`);
+    lines.push(``);
+  }
+
+  if (params.family === "wan") {
+    lines.push(lang === "zh"
+      ? "写作策略：主体稳定，动作单线推进，避免复杂跳切和大幅视角切换。"
+      : "Writing strategy: keep the subject stable, use a single continuous action line, avoid complex jump cuts and large perspective changes.");
+    lines.push(``);
+  }
+
+  if (params.family === "seedance") {
+    lines.push(lang === "zh"
+      ? "写作策略：使用更自然的分镜散文表达，镜头运动、环境反应与情绪节拍要清晰具体。"
+      : "Writing strategy: use more natural storyboard prose, with clear camera motion, environmental reactions, and emotional beats.");
     lines.push(``);
   }
 

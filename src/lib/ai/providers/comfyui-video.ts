@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { id as genId } from "@/lib/id";
 import { buildLTXi2vT2vWorkflow, buildLTXFlf2vWorkflow, getSigmaSchedules, getCameraLoRAName } from "./ltx-workflows";
+import { preflightWorkflow, type ModelRef } from "@/lib/comfyui/preflight";
+import { ErrorCodes } from "@/lib/comfyui/errors";
 
 const LTX_PRO_NEGATIVE =
   "pc game, console game, video game, cartoon, childish, ugly,nsfw,\u6587\u5b57\uff0c\u6c34\u5370\uff0c\u5b57\u5e55\uff0ctext, subtitles, captions, burned-in text, overlay text, watermark, logo, signature, numbers, letters, blurry text, garbage characters, unreadable symbols";
@@ -29,7 +31,7 @@ type ComfyHistoryRecord = {
   outputs?: Record<string, Record<string, ComfyOutputFile[]>>;
 };
 
-function splitTimelinePrompts(prompt: string) {
+export function splitTimelinePrompts(prompt: string) {
   const panelPrompts = new Map<number, string>();
   const timeRanges = new Map<number, { start: number; end: number }>();
 
@@ -79,7 +81,7 @@ function splitTimelinePrompts(prompt: string) {
   return { globalPrompt, localPrompts, segmentSeconds };
 }
 
-function buildManualStyleSegmentLengths(durationSec: number, fps: number, promptCount: number) {
+export function buildManualStyleSegmentLengths(durationSec: number, fps: number, promptCount: number) {
   if (promptCount === 4 && durationSec >= 14) {
     return [91, 90, 90, 90];
   }
@@ -117,6 +119,19 @@ export class ComfyUIVideoProvider implements VideoProvider {
       headers["Cookie"] = this.authCookie;
     }
     return headers;
+  }
+
+  private getRequiredModels(): ModelRef[] {
+    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
+    const models: ModelRef[] = [{ path: ckptName, type: "checkpoint" }];
+    if (this.model === "wan-i2v") {
+      models.push(
+        { path: "gguf/wan2.2_i2v_high_noise_14B_Q4_K_S.gguf", type: "checkpoint" },
+        { path: "wan/wan_2.1_vae.safetensors", type: "vae" },
+        { path: "wan/umt5-xxl-encoder-Q4_K_S.gguf", type: "clip" },
+      );
+    }
+    return models;
   }
 
   private templatesDir = path.resolve(__dirname, "templates");
@@ -519,6 +534,27 @@ export class ComfyUIVideoProvider implements VideoProvider {
     const isLTX = !isLtxPro && !is4Grid && this.model.startsWith("ltx-");
     const isFlf2v = this.model === "ltx-flf2v";
     const isT2v = this.model === "ltx-t2v";
+    const isWan = this.model === "wan-i2v";
+
+    if (params.duration >= 25) {
+      console.warn(`[ComfyUIVideo] Long video (${params.duration}s) may hit VRAM limits. Consider shorter segments or lowering resolution.`);
+    }
+
+    const preflightResult = await preflightWorkflow(
+      this.baseUrl,
+      this.model,
+      this.getRequiredModels(),
+      this.getAuthHeaders(),
+    );
+    if (!preflightResult.ok) {
+      console.warn(`[ComfyUIVideo] Preflight failed for ${this.model}:`, preflightResult.error);
+      if (preflightResult.warnings.length > 0) {
+        for (const w of preflightResult.warnings) console.warn(`  [ComfyUIVideo] Preflight warning: ${w}`);
+      }
+      if (preflightResult.error?.code === ErrorCodes.SERVER_UNAVAILABLE) {
+        throw new Error(`ComfyUI server unreachable: ${preflightResult.error.message}`);
+      }
+    }
 
     // Upload image(s) for non-t2v modes
     let firstFrameImage: string | undefined;
@@ -578,7 +614,6 @@ export class ComfyUIVideoProvider implements VideoProvider {
       await this.uploadImage(imagePath);
     }
 
-    const isWan = this.model === "wan-i2v";
     const sigmaPreset = "sigmaPreset" in params ? params.sigmaPreset : undefined;
     const cameraControl = "cameraControl" in params ? params.cameraControl : undefined;
     const outputPrefix = `${isWan ? "Wan" : "LTX"}_${genId()}_`;

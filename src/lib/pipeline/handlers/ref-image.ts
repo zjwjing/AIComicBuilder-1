@@ -15,6 +15,7 @@ import { extractJSON } from "@/lib/ai/ai-sdk";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY, TEMPERATURE_STRUCTURED } from "@/lib/config/defaults";
 import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildRefImagePromptsRequest } from "@/lib/ai/prompts/ref-image-prompts";
+import { buildVisualStyleContext } from "@/lib/visual-style";
 import {
   loadShotLegacyView,
   loadShotLegacyViewsBatch,
@@ -212,22 +213,11 @@ export async function handleGenerateRefPrompts(
 
   // Pull visual style meta from script
   const scriptSource = episodeId
-    ? await db.select({ script: episodes.script }).from(episodes).where(eq(episodes.id, episodeId))
-    : await db.select({ script: projects.script }).from(projects).where(eq(projects.id, projectId));
+    ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, episodeId))
+    : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
   const script = scriptSource[0]?.script || "";
-
-  const pickField = (label: string): string => {
-    const re = new RegExp(`${label}[：:]\\s*(.+?)(?:\\n|$)`);
-    const m = script.match(re);
-    return m?.[1]?.trim() || "";
-  };
-  const visualStyle = [
-    pickField("视觉风格") || pickField("Visual Style"),
-    pickField("色彩基调") && `色彩基调：${pickField("色彩基调")}`,
-    pickField("时代美学") && `时代美学：${pickField("时代美学")}`,
-    pickField("氛围情绪") && `氛围情绪：${pickField("氛围情绪")}`,
-    pickField("画幅比例") && `画幅比例：${pickField("画幅比例")}`,
-  ].filter(Boolean).join("；");
+  const idea = scriptSource[0]?.idea || "";
+  const visualStyle = buildVisualStyleContext(script, idea);
 
   const textProvider = resolveAIProvider(modelConfig);
   const refImageSystemPrompt = await resolvePrompt("ref_image_prompts", {

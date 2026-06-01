@@ -19,6 +19,14 @@ function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isQuotaError(err: unknown): boolean {
+  if (err && typeof err === "object" && "status" in err) {
+    const status = (err as { status: number }).status;
+    if (status === 401 || status === 403 || status === 429) return true;
+  }
+  return false;
+}
+
 function resolveSize(options?: ImageOptions): string {
   if (options?.size && options.size !== "2048x2048") return options.size;
   if (options?.aspectRatio) return ASPECT_SIZE_MAP[options.aspectRatio] || "1536x1024";
@@ -57,25 +65,11 @@ export class ASXSImageProvider implements AIProvider {
 
     console.log(`[ASXSImage] Generating: model=${this.model}, refs=${refs.length}, size=${size}`);
 
-    // Attempt 1: with reference_images (if any)
     let lastError: unknown;
-    for (let attempt = 1; attempt <= 2; attempt++) {
+
+    const attemptGeneration = async (params: Record<string, unknown>, label: string): Promise<string | null> => {
       try {
-        const generateParams: Record<string, unknown> = {
-          model: this.model,
-          prompt,
-          n: 1,
-          size,
-          quality,
-          response_format: "b64_json",
-        };
-
-        if (attempt === 1 && refs.length > 0) {
-          const resolvedRefs = await Promise.all(refs.map((r) => this.resolveUploadable(r)));
-          generateParams.reference_images = resolvedRefs;
-        }
-
-        const resp = await (this.client.images.generate as unknown as (params: Record<string, unknown>) => Promise<{ data: Array<Record<string, unknown>> }>)(generateParams);
+        const resp = await (this.client.images.generate as unknown as (params: Record<string, unknown>) => Promise<{ data: Array<Record<string, unknown>> }>)(params);
         const data = resp.data[0];
         if (data?.b64_json) {
           return this.saveImageBuffer(Buffer.from(data.b64_json as string, "base64"), "png");
@@ -86,39 +80,35 @@ export class ASXSImageProvider implements AIProvider {
         throw new Error(`No image data returned from ASXS images/generations`);
       } catch (err) {
         lastError = err;
-        console.error(`[ASXSImage] ${attempt === 1 && refs.length > 0 ? "with refs" : "txt2img"} attempt failed: ${toErrorMessage(err)}`);
-        if (attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-        }
+        console.error(`[ASXSImage] ${label} failed: ${toErrorMessage(err)}`);
+        return null;
       }
+    };
+
+    // Phase 1: with reference_images (if any), up to 2 attempts
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const generateParams: Record<string, unknown> = {
+        model: this.model, prompt, n: 1, size, quality, response_format: "b64_json",
+      };
+      if (attempt === 1 && refs.length > 0) {
+        const resolvedRefs = await Promise.all(refs.map((r) => this.resolveUploadable(r)));
+        generateParams.reference_images = resolvedRefs;
+      }
+      const result = await attemptGeneration(generateParams, attempt === 1 && refs.length > 0 ? "with refs" : "txt2img");
+      if (result) return result;
+      if (isQuotaError(lastError)) break;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500));
     }
 
-    // Retry up to 3 more times without reference images
+    // Phase 2: fallback without reference images, up to 3 attempts
     for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const resp = await (this.client.images.generate as unknown as (params: Record<string, unknown>) => Promise<{ data: Array<Record<string, unknown>> }>)({
-          model: this.model,
-          prompt,
-          n: 1,
-          size,
-          quality,
-          response_format: "b64_json",
-        });
-        const data = resp.data[0];
-        if (data?.b64_json) {
-          return this.saveImageBuffer(Buffer.from(data.b64_json as string, "base64"), "png");
-        }
-        if (data?.url) {
-          return await this.fetchImageToFile(data.url as string);
-        }
-        throw new Error(`No image data returned from ASXS images/generations`);
-      } catch (err) {
-        lastError = err;
-        console.error(`[ASXSImage] fallback attempt ${attempt}/3 failed: ${toErrorMessage(err)}`);
-        if (attempt < 3) {
-          await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
-        }
-      }
+      if (isQuotaError(lastError)) break;
+      const result = await attemptGeneration(
+        { model: this.model, prompt, n: 1, size, quality, response_format: "b64_json" },
+        `fallback ${attempt}/3`,
+      );
+      if (result) return result;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
     }
 
     throw new Error(`ASXS image generation failed: ${toErrorMessage(lastError)}`);

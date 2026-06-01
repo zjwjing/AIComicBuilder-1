@@ -237,6 +237,8 @@ interface ProjectStore {
   project: Project | null;
   loading: boolean;
   currentEpisodeId: string | null;
+  loadedProjectKey: string | null;
+  pendingProjectKey: string | null;
   fetchProject: (id: string, episodeId?: string, versionId?: string, excludeShots?: boolean) => Promise<void>;
   updateIdea: (idea: string) => void;
   updateScript: (script: string) => void;
@@ -247,11 +249,30 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: null,
   loading: false,
   currentEpisodeId: null,
+  loadedProjectKey: null,
+  pendingProjectKey: null,
 
   fetchProject: async (id: string, episodeId?: string, versionId?: string, excludeShots?: boolean) => {
+    const requestKey = `${id}:${episodeId ?? ""}:${versionId ?? ""}:${excludeShots ? "light" : "full"}`;
+    const state = get();
+
+    if (state.pendingProjectKey === requestKey || state.loadedProjectKey === requestKey) {
+      return;
+    }
+
+    if (
+      excludeShots &&
+      state.project?.id === id &&
+      (episodeId ? state.currentEpisodeId === episodeId : true) &&
+      state.project.shots.length > 0
+    ) {
+      return;
+    }
+
     // Only show loading spinner on initial load (no project yet).
     // Version switches are background refreshes — don't unmount children.
-    if (!get().project) set({ loading: true });
+    if (!state.project) set({ loading: true, pendingProjectKey: requestKey });
+    else set({ pendingProjectKey: requestKey });
 
     const params = new URLSearchParams();
     if (versionId) params.set("versionId", versionId);
@@ -267,7 +288,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     const res = await apiFetch(url);
     const data = await res.json();
-    set({ project: data, loading: false, currentEpisodeId: episodeId ?? null });
+    set({
+      project: data,
+      loading: false,
+      currentEpisodeId: episodeId ?? null,
+      loadedProjectKey: requestKey,
+      pendingProjectKey: null,
+    });
   },
 
   updateIdea: (idea: string) => {

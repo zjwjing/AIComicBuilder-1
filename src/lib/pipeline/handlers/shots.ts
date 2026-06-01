@@ -298,6 +298,10 @@ export async function handleShotSplitStream(
 
   // Split screenplay into smaller chunks to reduce upstream timeout risk.
   const fullScript = script || "";
+  const visualStyleReference = fullScript
+    .split(/\r?\n/)
+    .find((line) => line.trim().startsWith("视觉风格参考："))
+    ?.split("：").slice(1).join("：").trim();
   const sceneChunks = splitScriptByScenes(fullScript, 2);
   // Log scene detection details
   const sceneRe = /^[\s*#]*(?:SCENE|场景)\s*\d+/i;
@@ -317,7 +321,8 @@ export async function handleShotSplitStream(
       characterDescriptions,
       characterVisualHints,
       undefined,
-      characterPerformanceStyles.length > 0 ? characterPerformanceStyles : undefined
+      characterPerformanceStyles.length > 0 ? characterPerformanceStyles : undefined,
+      visualStyleReference,
     );
 
     if (relationsText) prompt += relationsText;

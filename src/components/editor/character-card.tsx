@@ -104,8 +104,9 @@ export function CharacterCard({
       });
       await response.json();
     } catch (err) {
-      console.error("Character image error:", err);
-      toast.error(t("common.generationFailed"));
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Character image error:", msg);
+      toast.error(msg.includes("余额") || msg.includes("quota") || msg.includes("insufficient") ? msg : t("common.generationFailed"));
     }
     setGenerating(false);
     onUpdate();

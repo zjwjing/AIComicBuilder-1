@@ -30,6 +30,7 @@ const DEFAULT_BASE_URLS: Record<Protocol, string> = {
   siliconflow: "https://api.siliconflow.cn",
   framepack: "http://localhost:7860",
   omnigen: "http://localhost:7860",
+  agnes: "https://apihub.agnes-ai.com/v1",
 };
 
 function getProtocolOptions(capability: Capability): { value: Protocol; label: string }[] {
@@ -38,6 +39,7 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
       { value: "openai", label: "OpenAI" },
       { value: "gemini", label: "Gemini" },
       { value: "nvidia", label: "NVIDIA" },
+      { value: "agnes", label: "Agnes AI" },
     ];
   }
   if (capability === "image") {
@@ -52,6 +54,7 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
       { value: "comfyui", label: "ComfyUI" },
       { value: "hidream", label: "HiDream (本地)" },
       { value: "omnigen", label: "OmniGen (本地)" },
+      { value: "agnes", label: "Agnes AI" },
     ];
   }
   // video
@@ -62,8 +65,9 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
     { value: "kling", label: "Kling" },
     { value: "wan", label: "百炼 (视频)" },
     { value: "comfyui", label: "ComfyUI" },
-    { value: "aivideo", label: "AI Video" },
-  ];
+      { value: "aivideo", label: "AI Video" },
+      { value: "agnes", label: "Agnes AI" },
+    ];
 }
 
 interface ProviderFormProps {

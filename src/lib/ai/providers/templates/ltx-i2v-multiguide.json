@@ -290,7 +290,7 @@
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "lora_name": "ltx2.3-video-restoration-general.safetensors",
-      "strength_model": 0.9,
+      "strength_model": 1.0,
       "model": ["371", 0]
     }
   },
@@ -298,7 +298,7 @@
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "lora_name": "ltx2.3-ic-subtitles-remove-general.safetensors",
-      "strength_model": 0.9,
+      "strength_model": 1.0,
       "model": ["375", 0]
     }
   },

@@ -16,6 +16,7 @@ import { AivideoVideoProvider } from "./providers/aivideo-video";
 import { ASXSImageProvider } from "./providers/asxs-image";
 import { FramepackVideoProvider } from "./providers/framepack-video";
 import { OmnigenImageProvider } from "./providers/omnigen-image";
+import { AgnesVideoProvider } from "./providers/agnes-video";
 import { setDefaultAIProvider, getAIProvider, getVideoProvider } from "./index";
 import type { AIProvider, VideoProvider } from "./types";
 
@@ -100,6 +101,7 @@ export function createAIProvider(config: ProviderConfig, uploadDir?: string): AI
         ...(uploadDir && { uploadDir }),
       });
     case "nvidia":
+    case "agnes":
       return new OpenAIProvider({
         apiKey: config.apiKey,
         baseURL: config.baseUrl,
@@ -177,6 +179,13 @@ export function createVideoProvider(config: ProviderConfig, uploadDir?: string):
         model: config.modelId,
         ...(uploadDir && { uploadDir }),
       });
+    case "agnes":
+      return new AgnesVideoProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        model: config.modelId,
+        ...(uploadDir && { uploadDir }),
+      });
     default:
       throw new Error(`Unsupported video protocol: ${config.protocol}`);
   }
@@ -199,7 +208,7 @@ function ensureDefaultProvider(): AIProvider {
   return fallback;
 }
 
-const TEXT_CAPABLE_PROTOCOLS = new Set(["openai", "gemini", "nvidia"]);
+const TEXT_CAPABLE_PROTOCOLS = new Set(["openai", "gemini", "nvidia", "agnes"]);
 
 export function resolveAIProvider(modelConfig?: ModelConfigPayload): AIProvider {
   if (modelConfig?.text && TEXT_CAPABLE_PROTOCOLS.has(modelConfig.text.protocol)) {

@@ -5,9 +5,9 @@ import { id as genId } from "@/lib/id";
 
 // ── Model family detection ──────────────────────────────────────────────────
 
-type ModelFamily = "wan" | "qwen" | "zimage";
+export type ModelFamily = "wan" | "qwen" | "zimage";
 
-function getModelFamily(model: string): ModelFamily {
+export function getModelFamily(model: string): ModelFamily {
   if (model.startsWith("wan")) return "wan";
   if (model.startsWith("z-image")) return "zimage";
   return "qwen"; // qwen-image-*
@@ -45,7 +45,7 @@ const ZIMAGE_ASPECT_RATIO_MAP: Record<string, string> = {
   "2:3": "1024*1536",
 };
 
-function resolveSize(
+export function resolveSize(
   family: ModelFamily,
   size?: string,
   aspectRatio?: string,

@@ -59,7 +59,7 @@ export class OmnigenImageProvider implements AIProvider {
     return result[0].data;
   }
 
-  private buildOmnigenPrompt(
+  buildOmnigenPrompt(
     prompt: string,
     options?: ImageOptions,
   ): string {
@@ -133,7 +133,7 @@ export class OmnigenImageProvider implements AIProvider {
     return result.event_id;
   }
 
-  private parseSSE(text: string, eventId: string): GradioEvent[] {
+  parseSSE(text: string, eventId: string): GradioEvent[] {
     const events: GradioEvent[] = [];
     const lines = text.split("\n");
     let currentEvent = "";

@@ -22,7 +22,7 @@ const SENSENOVA_SIZE_BY_RATIO: Record<string, string> = {
   "3:4": "1536x2752",
 };
 
-function normalizeSenseNovaSize(size?: string, aspectRatio?: string): string {
+export function normalizeSenseNovaSize(size?: string, aspectRatio?: string): string {
   if (aspectRatio && SENSENOVA_SIZE_BY_RATIO[aspectRatio]) {
     return SENSENOVA_SIZE_BY_RATIO[aspectRatio];
   }
@@ -49,7 +49,7 @@ function normalizeSenseNovaSize(size?: string, aspectRatio?: string): string {
   }
 }
 
-function normalizeBaseUrl(baseUrl?: string): string {
+export function normalizeBaseUrl(baseUrl?: string): string {
   const raw = (baseUrl || "https://token.sensenova.cn/v1").replace(/\/+$/, "");
   return raw.endsWith("/v1") ? raw : `${raw}/v1`;
 }
