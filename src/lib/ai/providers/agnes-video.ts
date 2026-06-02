@@ -25,6 +25,10 @@ export class AgnesVideoProvider implements VideoProvider {
     const body: Record<string, unknown> = {
       model: this.model,
       prompt: params.prompt,
+      width: 1152,
+      height: 768,
+      num_frames: 121,
+      frame_rate: 24,
     };
 
     if ("firstFrame" in params && params.firstFrame) {
@@ -37,7 +41,7 @@ export class AgnesVideoProvider implements VideoProvider {
 
     console.log(`[AgnesVideo] Submitting: model=${this.model}, hasImage=${"image" in body}`);
 
-    const submitRes = await fetch(`${this.baseUrl}/video/generations`, {
+    const submitRes = await fetch(`${this.baseUrl}/videos`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -92,7 +96,7 @@ export class AgnesVideoProvider implements VideoProvider {
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise((r) => setTimeout(r, 5_000));
 
-      const res = await fetch(`${this.baseUrl}/video/generations/${taskId}`, {
+      const res = await fetch(`${this.baseUrl}/videos/${taskId}`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
         signal: AbortSignal.timeout(15_000),
       });
@@ -100,35 +104,23 @@ export class AgnesVideoProvider implements VideoProvider {
       if (!res.ok) continue;
 
       const json = (await res.json()) as {
-        code?: string;
-        data?: {
-          status?: string;
-          fail_reason?: string;
-          data?: {
-            url?: string;
-            video_url?: string;
-            output?: string;
-            status?: string;
-            error?: string | null;
-          };
-        };
+        status?: string;
+        progress?: number;
+        error?: string | null;
+        remixed_from_video_id?: string;
+        video_url?: string;
       };
 
-      const outerStatus = json.data?.status;
-      const inner = json.data?.data;
-      console.log(`[AgnesVideo] Poll ${i + 1}: outerStatus=${outerStatus}, innerStatus=${inner?.status}`);
+      console.log(`[AgnesVideo] Poll ${i + 1}: status=${json.status}, progress=${json.progress}`);
 
-      if (outerStatus === "COMPLETED" || inner?.status === "completed" || inner?.status === "succeeded") {
-        const url = inner?.url || inner?.video_url || inner?.output;
+      if (json.status === "completed") {
+        const url = json.remixed_from_video_id || json.video_url;
         if (url) return url;
         throw new Error(`Agnes video: no URL in completed response: ${JSON.stringify(json)}`);
       }
 
-      if (outerStatus === "FAILED" || outerStatus === "FAILURE" || inner?.status === "failed") {
-        const errMsg = json.data?.fail_reason
-          || (inner?.error && (typeof inner.error === "string" ? inner.error : (inner.error as { message?: string }).message))
-          || "unknown";
-        throw new Error(`Agnes video generation failed: ${errMsg}`);
+      if (json.status === "failed") {
+        throw new Error(`Agnes video generation failed: ${json.error || "unknown"}`);
       }
     }
 
