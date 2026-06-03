@@ -183,32 +183,38 @@ export async function handleShotSplitStream(
         versionNum: agentNextVer, createdAt: agentDate, episodeId: episodeId ?? null,
       });
 
-      for (const shot of agentShots) {
-        const shotId = genId();
-        await db.insert(shots).values({
-          id: shotId, projectId, versionId: agentVersionId,
-          sequence: shot.sequence,
-          prompt: shot.startFrame || shot.sceneDescription || "",
-          motionScript: shot.motionScript || "",
-          videoScript: shot.videoScript ?? null,
-          cameraDirection: shot.cameraDirection || "static",
-          duration: shot.duration || 8,
-          transitionIn: shot.transitionIn || "cut",
-          transitionOut: shot.transitionOut || "cut",
-          compositionGuide: shot.compositionGuide || "",
-          focalPoint: shot.focalPoint || "",
-          depthOfField: shot.depthOfField || "medium",
-          soundDesign: shot.soundDesign || "",
-          musicCue: shot.musicCue || "",
-          episodeId: episodeId ?? null,
-        });
-        for (let i = 0; i < (shot.dialogues || []).length; i++) {
-          const d = shot.dialogues[i];
+      // Batch insert shots
+      const agentShotRows = agentShots.map((shot) => ({
+        id: genId(),
+        projectId,
+        versionId: agentVersionId,
+        sequence: shot.sequence,
+        prompt: shot.startFrame || shot.sceneDescription || "",
+        motionScript: shot.motionScript || "",
+        videoScript: shot.videoScript ?? null,
+        cameraDirection: shot.cameraDirection || "static",
+        duration: shot.duration || 8,
+        transitionIn: shot.transitionIn || "cut",
+        transitionOut: shot.transitionOut || "cut",
+        compositionGuide: shot.compositionGuide || "",
+        focalPoint: shot.focalPoint || "",
+        depthOfField: shot.depthOfField || "medium",
+        soundDesign: shot.soundDesign || "",
+        musicCue: shot.musicCue || "",
+        episodeId: episodeId ?? null,
+      }));
+      await db.insert(shots).values(agentShotRows);
+
+      // Batch insert dialogues
+      const agentDialogueRows = agentShots.flatMap((shot, si) => {
+        const shotId = agentShotRows[si].id;
+        return (shot.dialogues || []).flatMap((d, i) => {
           const mc = agentCharacters.find((c) => c.name === d.character);
-          if (mc) {
-            await db.insert(dialogues).values({ id: genId(), shotId, characterId: mc.id, text: d.text, sequence: i });
-          }
-        }
+          return mc ? [{ id: genId(), shotId, characterId: mc.id, text: d.text, sequence: i }] : [];
+        });
+      });
+      if (agentDialogueRows.length > 0) {
+        await db.insert(dialogues).values(agentDialogueRows);
       }
       console.log(`[ShotSplit Agent] Created ${agentShots.length} shots`);
       return NextResponse.json({ shots: agentShots.length });
@@ -450,46 +456,42 @@ export async function handleShotSplitStream(
   });
   console.log(`[ShotSplit] Created storyboard version ${versionLabel} (${versionId}) for project ${projectId}${episodeId ? ` episode ${episodeId}` : ""}`);
 
-  for (const shot of allShots) {
-    const shotId = genId();
-    await db.insert(shots).values({
-      id: shotId,
-      projectId,
-      versionId,
-      sequence: shot.sequence,
-      prompt: shot.sceneDescription,
-      motionScript: shot.motionScript,
-      videoScript: shot.videoScript ?? null,
-      cameraDirection: shot.cameraDirection || "static",
-      duration: shot.duration,
-      transitionIn: shot.transitionIn || "cut",
-      transitionOut: shot.transitionOut || "cut",
-      compositionGuide: shot.compositionGuide || "",
-      focalPoint: shot.focalPoint || "",
-      depthOfField: shot.depthOfField || "medium",
-      soundDesign: shot.soundDesign || "",
-      musicCue: shot.musicCue || "",
-      episodeId: episodeId ?? null,
-    });
-    // No automatic asset seeding — shot_assets rows are only created when
-    // the user explicitly clicks "生成首尾帧提示词" or "生成参考图提示词".
-    // Each generation button writes only its own asset type.
+  // Batch insert shots
+  const shotRows = allShots.map((shot) => ({
+    id: genId(),
+    projectId,
+    versionId,
+    sequence: shot.sequence,
+    prompt: shot.sceneDescription,
+    motionScript: shot.motionScript,
+    videoScript: shot.videoScript ?? null,
+    cameraDirection: shot.cameraDirection || "static",
+    duration: shot.duration,
+    transitionIn: shot.transitionIn || "cut",
+    transitionOut: shot.transitionOut || "cut",
+    compositionGuide: shot.compositionGuide || "",
+    focalPoint: shot.focalPoint || "",
+    depthOfField: shot.depthOfField || "medium",
+    soundDesign: shot.soundDesign || "",
+    musicCue: shot.musicCue || "",
+    episodeId: episodeId ?? null,
+  }));
+  await db.insert(shots).values(shotRows);
 
-    for (let i = 0; i < (shot.dialogues || []).length; i++) {
-      const dialogue = shot.dialogues[i];
+  // Batch insert dialogues
+  const dialogueRows = allShots.flatMap((shot, si) => {
+    const shotId = shotRows[si].id;
+    return (shot.dialogues || []).flatMap((d, i) => {
       const matchedChar = shotCharacters.find(
-        (c: typeof characters.$inferSelect) => c.name === dialogue.character
+        (c: typeof characters.$inferSelect) => c.name === d.character
       );
-      if (matchedChar) {
-        await db.insert(dialogues).values({
-          id: genId(),
-          shotId,
-          characterId: matchedChar.id,
-          text: dialogue.text,
-          sequence: i,
-        });
-      }
-    }
+      return matchedChar
+        ? [{ id: genId(), shotId, characterId: matchedChar.id, text: d.text, sequence: i }]
+        : [];
+    });
+  });
+  if (dialogueRows.length > 0) {
+    await db.insert(dialogues).values(dialogueRows);
   }
 
   console.log(`[ShotSplit] Created ${allShots.length} shots from ${sceneChunks.length} chunks into version ${versionLabel} (${versionId})`);

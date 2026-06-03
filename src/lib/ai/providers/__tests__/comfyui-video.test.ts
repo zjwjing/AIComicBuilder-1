@@ -3,6 +3,8 @@ import { ComfyUIVideoProvider } from "../comfyui-video";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "mock-id-456") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     readFileSync: vi.fn(() => "{}"),
@@ -10,12 +12,14 @@ vi.mock("node:fs", () => ({
     readdirSync: vi.fn(() => []),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   readFileSync: vi.fn(() => "{}"),
   existsSync: vi.fn(() => false),
   readdirSync: vi.fn(() => []),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 vi.mock("@/lib/comfyui/preflight", () => ({
@@ -35,7 +39,7 @@ import { preflightWorkflow } from "@/lib/comfyui/preflight";
 let mockFetch: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.restoreAllMocks();
   mockFetch = vi.fn();
   vi.stubGlobal("fetch", mockFetch);
 });
@@ -344,6 +348,118 @@ describe("ComfyUIVideoProvider", () => {
         duration: 5,
       } as any)).rejects.toThrow("LTX multi-guide requires a starting image");
     });
+
+    it("passes signal to fetch calls", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      vi.spyOn(ComfyUIVideoProvider.prototype as any, "pollForVideo")
+        .mockResolvedValue({ filename: "result.mp4", subfolder: "video", type: "output" });
+
+      mockFetch
+        .mockResolvedValueOnce({ ok: true })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ prompt_id: "p-signal" }),
+          text: vi.fn(),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(100)),
+        });
+
+      const p = new ComfyUIVideoProvider({ baseUrl: "http://localhost:8188" });
+      await p.generateVideo({ prompt: "cat", duration: 5, ratio: "16:9", initialImage: "input.png" });
+      for (const call of mockFetch.mock.calls) {
+        expect(call[1]).toHaveProperty("signal");
+      }
+    });
+
+    it("throws on JSON parse error from submit response", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      mockFetch
+        .mockResolvedValueOnce({ ok: true })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token <")),
+          text: vi.fn(),
+        });
+
+      const p = new ComfyUIVideoProvider({ baseUrl: "http://localhost:8188" });
+      await expect(p.generateVideo({
+        prompt: "cat", duration: 5, ratio: "16:9", initialImage: "input.png",
+      })).rejects.toThrow(SyntaxError);
+    });
+
+    it("throws on network error", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+
+      const p = new ComfyUIVideoProvider({ baseUrl: "http://localhost:8188" });
+      await expect(p.generateVideo({
+        prompt: "cat", duration: 5, ratio: "16:9", initialImage: "input.png",
+      })).rejects.toThrow(TypeError);
+    });
+
+    it("throws when poll times out", async () => {
+      vi.useFakeTimers();
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/upload/image")) {
+          return Promise.resolve({ ok: true });
+        }
+        if (url.includes("/prompt")) {
+          return Promise.resolve({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ prompt_id: "p-timeout" }),
+            text: vi.fn(),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({}),
+        });
+      });
+
+      const p = new ComfyUIVideoProvider({ baseUrl: "http://localhost:8188" });
+      let caught: any;
+      const promise = p.generateVideo({
+        prompt: "cat", duration: 5, ratio: "16:9", initialImage: "input.png",
+      }).catch((e) => { caught = e; });
+      await vi.advanceTimersByTimeAsync(1_800_100);
+      vi.useRealTimers();
+      expect(caught?.message).toContain("ComfyUI video generation timed out after 30 minutes");
+    }, 30_000);
   });
 });
 

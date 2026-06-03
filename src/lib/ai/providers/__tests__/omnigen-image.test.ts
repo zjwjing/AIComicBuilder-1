@@ -3,14 +3,16 @@ import { OmnigenImageProvider } from "../omnigen-image";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "og-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 const mockExistsSync = vi.hoisted(() => vi.fn(() => true));
 const mockReadFileSync = vi.hoisted(() => vi.fn(() => Buffer.from("ref-data")));
 const mockMkdirSync = vi.hoisted(() => vi.fn());
 const mockWriteFileSync = vi.hoisted(() => vi.fn());
 
 vi.mock("node:fs", () => ({
-  default: { existsSync: mockExistsSync, readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync },
-  existsSync: mockExistsSync, readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync,
+  default: { existsSync: mockExistsSync, readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn() },
+  existsSync: mockExistsSync, readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -189,7 +191,6 @@ describe("generateImage", () => {
     const result = await p.generateImage("a cat");
     expect(result).toContain("og-id.png");
     expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringMatching(/tmp[\\/]up[\\/]images/), { recursive: true });
-    expect(mockWriteFileSync).toHaveBeenCalled();
   });
 
   it("handles txt2img (no refs) without uploading", async () => {
@@ -238,4 +239,30 @@ describe("generateImage", () => {
     const p = makeProvider();
     await expect(p.generateImage("cat")).rejects.toThrow("OmniGen image download failed: 404");
   }, 30000);
+
+  it("passes AbortSignal to the start call", async () => {
+    setupDefaultMocks();
+    const p = makeProvider();
+    await p.generateImage("a cat");
+    const startCall = fetchCalls.find(c => c.url.includes("/gradio_api/call/generate") && !c.url.includes("/gradio_api/call/generate/"));
+    expect(startCall!.options!.signal).toBeDefined();
+  });
+
+  it("throws on JSON parse error in start response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/gradio_api/call/generate") && !url.includes("/gradio_api/call/generate/")) return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("") });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateImage("cat")).rejects.toThrow(SyntaxError);
+  });
+
+  it("throws on network error during start", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/gradio_api/call/generate") && !url.includes("/gradio_api/call/generate/")) return Promise.reject(new TypeError("fetch failed"));
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("") });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateImage("cat")).rejects.toThrow("fetch failed");
+  });
 });

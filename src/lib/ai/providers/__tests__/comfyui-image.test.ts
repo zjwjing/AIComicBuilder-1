@@ -3,15 +3,19 @@ import { ComfyUIImageProvider } from "../comfyui-image";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "mock-id-123") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     readFileSync: vi.fn(() => Buffer.from("fake-image-bytes")),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   readFileSync: vi.fn(() => Buffer.from("fake-image-bytes")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 vi.mock("@/lib/comfyui/preflight", () => ({
@@ -408,6 +412,118 @@ describe("ComfyUIImageProvider", () => {
       });
       await p.generateImage("a cat").catch(() => {});
       expect(mockFetch.mock.calls[0][1].headers.Authorization).toBe("Bearer secret");
+    });
+
+    it("passes signal to fetch calls", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      const submitResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({ prompt_id: "p-signal" }),
+        text: vi.fn(),
+      };
+      const historyResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          "p-signal": {
+            outputs: {
+              "9": { images: [{ filename: "out.png" }] },
+            },
+          },
+        }),
+      };
+      const viewResponse = {
+        ok: true,
+        headers: new Map([["content-type", "image/png"]]),
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(10)),
+      };
+
+      mockFetch
+        .mockResolvedValueOnce(submitResponse)
+        .mockResolvedValueOnce(historyResponse)
+        .mockResolvedValueOnce(viewResponse);
+
+      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188" });
+      await p.generateImage("a cat");
+      for (const call of mockFetch.mock.calls) {
+        expect(call[1]).toHaveProperty("signal");
+      }
+    });
+
+    it("throws on JSON parse error from submit response", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token < in JSON")),
+        text: vi.fn(),
+      });
+
+      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188" });
+      await expect(p.generateImage("a cat")).rejects.toThrow(SyntaxError);
+    });
+
+    it("throws on network error", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+
+      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188" });
+      await expect(p.generateImage("a cat")).rejects.toThrow(TypeError);
+    });
+
+    it("throws when poll times out", async () => {
+      vi.useFakeTimers();
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes("/prompt")) {
+          return Promise.resolve({
+            ok: true,
+            json: vi.fn().mockResolvedValue({ prompt_id: "p-timeout" }),
+            text: vi.fn(),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({}),
+        });
+      });
+
+      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188" });
+      let caught: any;
+      const promise = p.generateImage("a cat").catch((e) => { caught = e; });
+      await vi.advanceTimersByTimeAsync(240_100);
+      vi.useRealTimers();
+      expect(caught?.message).toContain("ComfyUI image generation timed out after 4 minutes");
     });
   });
 });

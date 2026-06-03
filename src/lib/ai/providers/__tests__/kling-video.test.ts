@@ -3,17 +3,21 @@ import { KlingVideoProvider } from "../kling-video";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "kling-test-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     existsSync: vi.fn(() => true),
     readFileSync: vi.fn(() => Buffer.from("img")),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   existsSync: vi.fn(() => true),
   readFileSync: vi.fn(() => Buffer.from("img")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 const mockCreateHmac = vi.hoisted(() => vi.fn(() => ({ update: vi.fn(() => ({ digest: vi.fn(() => "mock-sig") })) })));
@@ -268,5 +272,84 @@ describe("generateVideo", () => {
     const call = fetchCalls.find(c => c.url.includes("/v1/videos/text2video"));
     const body = JSON.parse(call!.options!.body as string);
     expect(body.reference_image[0]).toBeTruthy();
+  });
+});
+
+describe("AbortSignal", () => {
+  it("passes signal to submit fetch call", async () => {
+    vi.useFakeTimers();
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateVideo({ prompt: "a cat", firstFrame: "s.png", lastFrame: "e.png", duration: 5, ratio: "16:9" } as any);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await promise;
+    const submitCall = fetchCalls.find(c => c.url.includes("/v1/videos/image2video"));
+    expect(submitCall!.options!.signal).toBeDefined();
+  });
+});
+
+describe("JSON parse error", () => {
+  it("throws on malformed JSON in submit response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/v1/videos/text2video") && !url.includes("/text2video/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "a cat", initialImage: "ref.png", duration: 5, ratio: "16:9" })).rejects.toThrow(SyntaxError);
+  });
+});
+
+describe("network error", () => {
+  it("throws when fetch fails during submit", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/v1/videos/text2video") && !url.includes("/text2video/")) {
+        return Promise.reject(new TypeError("fetch failed"));
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "a cat", initialImage: "ref.png", duration: 5, ratio: "16:9" })).rejects.toThrow(TypeError);
+  });
+});
+
+describe("poll timeout", () => {
+  it("throws after max retries when poll never completes", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("AbortSignal", { timeout: () => new AbortController().signal });
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/v1/videos/image2video/") || url.includes("/v1/videos/text2video/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ code: 0, data: { task_status: "processing", task_status_msg: "", task_result: {} } }) });
+      }
+      if (url.includes("/v1/videos/image2video")) return Promise.resolve(klingSubmitOk("ktask-tout"));
+      if (url.includes("/v1/videos/text2video")) return Promise.resolve(klingSubmitOk("ktask-tout"));
+      return Promise.resolve({ ok: true, headers: new Headers({ "content-type": "video/mp4" }), arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateVideo({ prompt: "a cat", firstFrame: "s.png", lastFrame: "e.png", duration: 5, ratio: "16:9" } as any);
+    promise.catch(() => {});
+    await vi.advanceTimersByTimeAsync(600_000);
+    await expect(promise).rejects.toThrow("Kling video generation timed out after 10 minutes");
+    vi.useRealTimers();
+  });
+});
+
+describe("missing API key", () => {
+  it("throws when no API key is provided", async () => {
+    vi.stubEnv("KLING_ACCESS_KEY", "");
+    vi.stubEnv("KLING_SECRET_KEY", "");
+    vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+      if (url.includes("/v1/videos/text2video") && !url.includes("/text2video/")) {
+        const headers = options?.headers as Record<string, string>;
+        if (!headers?.Authorization || headers.Authorization === "Bearer ") {
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve("unauthorized") });
+        }
+        return Promise.resolve(klingSubmitOk());
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateVideo({ prompt: "a cat", initialImage: "ref.png", duration: 5, ratio: "16:9" })).rejects.toThrow("Kling text2video submit failed: 401");
+    vi.unstubAllEnvs();
   });
 });

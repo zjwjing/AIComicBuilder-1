@@ -3,6 +3,8 @@ import { ASXSImageProvider } from "../asxs-image";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "mock-id-456") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     existsSync: vi.fn(() => true),
@@ -10,12 +12,14 @@ vi.mock("node:fs", () => ({
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
     createReadStream: vi.fn(() => ({ pipe: vi.fn() })),
+    createWriteStream: vi.fn(),
   },
   existsSync: vi.fn(() => true),
   readFileSync: vi.fn(() => Buffer.from("fake-image-bytes")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   createReadStream: vi.fn(() => ({ pipe: vi.fn() })),
+  createWriteStream: vi.fn(),
 }));
 
 const mockGenerate = vi.hoisted(() => vi.fn());
@@ -74,6 +78,16 @@ describe("ASXSImageProvider", () => {
       const p = new ASXSImageProvider({ apiKey: "ctor-key", baseUrl: "https://ctor.asxs.top/v1" });
       expect((p as any).client.apiKey).toBe("ctor-key");
       expect((p as any).client.baseURL).toBe("https://ctor.asxs.top/v1");
+      vi.unstubAllEnvs();
+    });
+
+    it("creates client with empty apiKey when no key provided", () => {
+      vi.stubEnv("ASXS_API_KEY", "");
+      vi.stubEnv("ASXS_BASE_URL", "");
+      vi.stubEnv("IMAGEGEN_API_KEY", "");
+      vi.stubEnv("OPENAI_API_KEY", "");
+      const p = new ASXSImageProvider();
+      expect((p as any).client.apiKey).toBe("");
       vi.unstubAllEnvs();
     });
   });
@@ -142,6 +156,28 @@ describe("ASXSImageProvider", () => {
       const p = new ASXSImageProvider();
       await expect(p.generateImage("a cat")).rejects.toThrow("too many");
       expect(mockGenerate).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws on unexpected response shape from SDK", async () => {
+      mockGenerate.mockReset();
+      mockGenerate.mockResolvedValue({ data: [{ something: "unexpected" }] });
+      const p = new ASXSImageProvider();
+      await expect(p.generateImage("a cat")).rejects.toThrow("No image data returned");
+    }, 15000);
+
+    it("passes abort signal to download fetch", async () => {
+      mockGenerate.mockResolvedValueOnce({ data: [{ url: "https://example.com/img.png" }] });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: new Headers({ "content-type": "image/png" }),
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
+      });
+      const p = new ASXSImageProvider();
+      await p.generateImage("a cat");
+      expect(mockFetch).toHaveBeenCalled();
+      const [, options] = mockFetch.mock.calls[0];
+      expect(options).toBeDefined();
+      expect((options as Record<string, unknown>).signal).toBeDefined();
     });
 
     it("falls back without refs when refs phase fails", async () => {

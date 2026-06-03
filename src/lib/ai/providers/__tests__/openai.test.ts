@@ -3,17 +3,21 @@ import { OpenAIProvider } from "../openai";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "openai-test-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     existsSync: vi.fn(() => true),
     readFileSync: vi.fn(() => Buffer.from("img")),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   existsSync: vi.fn(() => true),
   readFileSync: vi.fn(() => Buffer.from("img")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 const mockChatCreate = vi.hoisted(() => vi.fn());
@@ -92,14 +96,32 @@ describe("constructor", () => {
     expect((p as any).isNvidia).toBe(true);
   });
 
-  it("uses IMAGEGEN_API_KEY and IMAGEGEN_BASE_URL for image client", () => {
+  it("uses IMAGEGEN_API_KEY as fallback when no image params given", () => {
     vi.stubEnv("IMAGEGEN_API_KEY", "img-key");
     vi.stubEnv("IMAGEGEN_BASE_URL", "https://img.example.com/v1");
-    const p = makeProvider({ apiKey: "main-key", baseURL: "https://main.example.com/v1" });
-    expect((p as any).client.apiKey).toBe("main-key");
-    expect((p as any).client.baseURL).toBe("https://main.example.com/v1");
+    const p = makeProvider();
     expect((p as any).imageClient.apiKey).toBe("img-key");
     expect((p as any).imageClient.baseURL).toBe("https://img.example.com/v1");
+    vi.unstubAllEnvs();
+  });
+
+  it("params.apiKey takes precedence over IMAGEGEN_API_KEY", () => {
+    vi.stubEnv("IMAGEGEN_API_KEY", "img-key");
+    vi.stubEnv("IMAGEGEN_BASE_URL", "https://img.example.com/v1");
+    const p = makeProvider({ apiKey: "agnes-key", baseURL: "https://apihub.agnes-ai.com/v1" });
+    expect((p as any).client.apiKey).toBe("agnes-key");
+    expect((p as any).imageClient.apiKey).toBe("agnes-key");
+    expect((p as any).imageClient.baseURL).toBe("https://apihub.agnes-ai.com/v1");
+    vi.unstubAllEnvs();
+  });
+
+  it("handles missing API key gracefully", () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubEnv("IMAGEGEN_API_KEY", "");
+    vi.stubEnv("OPENAI_BASE_URL", "");
+    const p = makeProvider();
+    expect((p as any).client.apiKey).toBe("");
+    expect((p as any).imageClient.apiKey).toBe("");
     vi.unstubAllEnvs();
   });
 });
@@ -169,6 +191,12 @@ describe("generateText", () => {
   it("throws on non-429 error without retry", async () => {
     mockChatCreate.mockRejectedValue(new Error("bad request"));
     await expect(makeProvider().generateText("hi")).rejects.toThrow("bad request");
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws on network error from OpenAI SDK", async () => {
+    mockChatCreate.mockRejectedValue(new Error("connect ECONNREFUSED"));
+    await expect(makeProvider().generateText("hi")).rejects.toThrow("connect ECONNREFUSED");
     expect(mockChatCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -322,6 +350,31 @@ describe("generateImage", () => {
       const p = makeProvider({ model: "dall-e-3" });
       await expect(p.generateImage("a cat", { size: "512x512" })).rejects.toThrow();
     });
+  });
+
+  it("throws when download fetch returns non-ok status", async () => {
+    mockImageGenerate.mockResolvedValueOnce({ data: [{ url: "https://example.com/img.png" }] });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      text: vi.fn().mockResolvedValue("Bad Gateway"),
+    });
+    await expect(makeProvider().generateImage("a dog")).rejects.toThrow("Failed to download generated image");
+    expect(mockImageGenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes abort signal to download fetch", async () => {
+    mockImageGenerate.mockResolvedValueOnce({ data: [{ url: "https://example.com/img.png" }] });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png" }),
+      arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
+    });
+    await makeProvider().generateImage("a dog");
+    expect(mockFetch).toHaveBeenCalled();
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options).toBeDefined();
+    expect((options as Record<string, unknown>).signal).toBeDefined();
   });
 
   describe("SenseNova", () => {

@@ -71,6 +71,13 @@ describe("constructor", () => {
     const p = makeProvider({ baseUrl: "https://example.com/v1beta/" });
     expect((p as any).client.httpOptions.baseUrl).toBe("https://example.com");
   });
+
+  it("handles missing API key gracefully", () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    const p = makeProvider();
+    expect((p as any).client.apiKey).toBe("");
+    vi.unstubAllEnvs();
+  });
 });
 
 describe("generateText", () => {
@@ -124,6 +131,11 @@ describe("generateText", () => {
     const result = await makeProvider().generateText("hi");
     expect(result).toBe("");
   });
+
+  it("throws on network error from Gemini SDK", async () => {
+    mockGenerateContent.mockRejectedValue(new Error("NETWORK_ERROR"));
+    await expect(makeProvider().generateText("hi")).rejects.toThrow("NETWORK_ERROR");
+  });
 });
 
 describe("generateImage", () => {
@@ -155,12 +167,22 @@ describe("generateImage", () => {
     await expect(makeProvider().generateImage("a cat")).rejects.toThrow("No image data found");
   });
 
+  it("throws when response has unexpected shape", async () => {
+    mockGenerateContent.mockResolvedValueOnce({ unexpected: "shape" });
+    await expect(makeProvider().generateImage("a cat")).rejects.toThrow("No image returned from Gemini");
+  });
+
   it("passes custom model", async () => {
     mockGenerateContent.mockResolvedValueOnce({
       candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aW1hZ2U=" } }] } }],
     });
     await makeProvider().generateImage("a cat", { model: "gemini-2.0-flash-exp" });
     expect(mockGenerateContent.mock.calls[0][0].model).toBe("gemini-2.0-flash-exp");
+  });
+
+  it("throws on network error from Gemini SDK in generateImage", async () => {
+    mockGenerateContent.mockRejectedValue(new Error("Rate limit exceeded"));
+    await expect(makeProvider().generateImage("a cat")).rejects.toThrow("Rate limit exceeded");
   });
 
   describe("reference images", () => {

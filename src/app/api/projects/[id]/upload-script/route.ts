@@ -189,23 +189,17 @@ export async function POST(
 
   let seq = (seqResult?.maxSeq ?? 0) + 1;
 
-  // Create all episodes in DB
-  const created = [];
-  for (const ep of allEpisodes) {
-    const [row] = await db
-      .insert(episodes)
-      .values({
-        id: genId(),
-        projectId,
-        title: ep.title,
-        description: ep.description || "",
-        keywords: ep.keywords || "",
-        idea: ep.idea || "",
-        sequence: seq++,
-      })
-      .returning();
-    created.push(row);
-  }
+  // Create all episodes in DB via batch insert
+  const episodeRows = allEpisodes.map((ep) => ({
+    id: genId(),
+    projectId,
+    title: ep.title,
+    description: ep.description || "",
+    keywords: ep.keywords || "",
+    idea: ep.idea || "",
+    sequence: seq++,
+  }));
+  const created = await db.insert(episodes).values(episodeRows).returning();
 
   console.log(
     `[UploadScript] Created ${created.length} episodes from ${chunks.length} chunks`

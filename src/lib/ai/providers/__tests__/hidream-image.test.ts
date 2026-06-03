@@ -210,4 +210,37 @@ describe("generateImage", () => {
     const p = makeProvider();
     await expect(p.generateImage("cat")).rejects.toThrow("HiDream stream ended without result");
   });
+
+  it("passes AbortSignal to the start call", async () => {
+    setupDefaultMocks();
+    const p = makeProvider();
+    await p.generateImage("a cat");
+    const startCall = fetchCalls.find(c => c.url.includes("/api/generate/start"));
+    expect(startCall!.options!.signal).toBeDefined();
+  });
+
+  it("throws on JSON parse error in start response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/api/generate/start")) return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      return Promise.resolve({ ok: true, body: sseStream([]) });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateImage("cat")).rejects.toThrow(SyntaxError);
+  });
+
+  it("throws on network error during start", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/api/generate/start")) return Promise.reject(new TypeError("fetch failed"));
+      return Promise.resolve({ ok: true, body: sseStream([]) });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateImage("cat")).rejects.toThrow("fetch failed");
+  });
+
+  it("handles missing apiKey gracefully", async () => {
+    setupDefaultMocks();
+    const p = makeProvider({ apiKey: "" });
+    const result = await p.generateImage("a cat");
+    expect(result).toContain("hd-id.png");
+  });
 });

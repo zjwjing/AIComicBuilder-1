@@ -133,7 +133,7 @@ export function buildLTXi2vT2vWorkflow(
     },
     "320:279": {
       class_type: "LTXVAudioVAELoader",
-      inputs: { ckpt_name: "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors" },
+      inputs: { ckpt_name: "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors" },
     },
     "320:280": {
       class_type: "KSamplerSelect",
@@ -364,13 +364,13 @@ export function buildLTXi2vT2vWorkflow(
     },
     "320:316": {
       class_type: "CheckpointLoaderSimple",
-      inputs: { ckpt_name: "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors" },
+      inputs: { ckpt_name: "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors" },
     },
     "320:317": {
       class_type: "LTXAVTextEncoderLoader",
       inputs: {
         text_encoder: "gemma_3_12B_it_fp4_mixed.safetensors",
-        ckpt_name: "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors",
+        ckpt_name: "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors",
         device: "default",
       },
     },
@@ -639,17 +639,17 @@ export function buildLTXFlf2vWorkflow(
     },
     "129:127": {
       class_type: "CheckpointLoaderSimple",
-      inputs: { ckpt_name: "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors" },
+      inputs: { ckpt_name: "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors" },
     },
     "129:126": {
       class_type: "LTXVAudioVAELoader",
-      inputs: { ckpt_name: "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors" },
+      inputs: { ckpt_name: "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors" },
     },
     "129:103": {
       class_type: "LTXAVTextEncoderLoader",
       inputs: {
         text_encoder: "gemma_3_12B_it_fp4_mixed.safetensors",
-        ckpt_name: "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors",
+        ckpt_name: "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors",
         device: "default",
       },
     },

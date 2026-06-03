@@ -3,16 +3,20 @@ import { FramepackVideoProvider } from "../framepack-video";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "fp-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 let mockReadFileSync = vi.hoisted(() => vi.fn(() => Buffer.from("img")));
 vi.mock("node:fs", () => ({
   default: {
     readFileSync: mockReadFileSync,
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   readFileSync: mockReadFileSync,
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -197,5 +201,32 @@ describe("generateVideo", () => {
 
     const p = makeProvider({ uploadDir: "/tmp/up" });
     await p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any);
+  });
+
+  it("passes AbortSignal to the upload call", async () => {
+    const p = makeProvider({ uploadDir: "/tmp/up" });
+    await p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any);
+    const uploadCall = fetchCalls.find(c => c.url.includes("/gradio_api/upload"));
+    expect(uploadCall!.options!.signal).toBeDefined();
+  });
+
+  it("throws on JSON parse error in upload response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/gradio_api/upload")) return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+
+    const p = makeProvider();
+    await expect(p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any)).rejects.toThrow(SyntaxError);
+  });
+
+  it("throws on network error during upload", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/gradio_api/upload")) return Promise.reject(new TypeError("fetch failed"));
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+
+    const p = makeProvider();
+    await expect(p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any)).rejects.toThrow("fetch failed");
   });
 });

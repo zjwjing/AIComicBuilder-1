@@ -3,15 +3,19 @@ import { AgnesVideoProvider } from "../agnes-video";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "agnes-test-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     readFileSync: vi.fn(() => Buffer.from("img")),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   readFileSync: vi.fn(() => Buffer.from("img")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -280,5 +284,81 @@ describe("generateVideo", () => {
     const result = await runWithAdvance(() => p.generateVideo({ prompt: "cat", duration: 5, ratio: "16:9" } as any));
     expect((result as any).filePath).toContain("agnes-test-id.mp4");
     expect(polledId).toBe("task-alt-id");
+  });
+});
+
+describe("AbortSignal", () => {
+  it("passes signal to submit fetch call", async () => {
+    const p = makeProvider({ apiKey: "ak" });
+    await runWithAdvance(() => p.generateVideo({ prompt: "cat", duration: 5, ratio: "16:9" } as any));
+    const submitCall = fetchCalls.find(c => c.url.includes("/videos") && !c.url.includes("/videos/"));
+    expect(submitCall!.options!.signal).toBeDefined();
+  });
+});
+
+describe("JSON parse error", () => {
+  it("throws on malformed JSON in submit response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/videos") && !url.includes("/videos/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", duration: 5, ratio: "16:9" } as any)).rejects.toThrow(SyntaxError);
+  });
+});
+
+describe("network error", () => {
+  it("throws when fetch fails during submit", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/videos") && !url.includes("/videos/")) {
+        return Promise.reject(new TypeError("fetch failed"));
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", duration: 5, ratio: "16:9" } as any)).rejects.toThrow(TypeError);
+  });
+});
+
+describe("poll timeout", () => {
+  it("throws when poll exceeds max retries", async () => {
+    vi.stubGlobal("AbortSignal", { timeout: () => new AbortController().signal });
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/videos/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: "task-1", status: "in_progress" }) });
+      }
+      if (url.includes("/videos")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: "task-1", task_id: "task-1", status: "queued" }) });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateVideo({ prompt: "cat", duration: 5, ratio: "16:9" } as any);
+    promise.catch(() => {});
+    await vi.advanceTimersByTimeAsync(600_000);
+    await expect(promise).rejects.toThrow("Agnes video generation timed out after 10 minutes");
+  });
+});
+
+describe("missing API key", () => {
+  it("throws when no API key is provided", async () => {
+    vi.stubEnv("AGNES_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+      if (url.includes("/videos") && !url.includes("/videos/")) {
+        const headers = options?.headers as Record<string, string>;
+        if (!headers?.Authorization || headers.Authorization === "Bearer ") {
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve("unauthorized") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: "task-1", task_id: "task-1", status: "queued" }) });
+      }
+      if (url.includes("/videos/")) return Promise.resolve({ ok: true, json: () => Promise.resolve(COMPLETED_RESPONSE) });
+      if (url.includes("storage.agnes-ai.com") || url.includes("example.com")) return Promise.resolve({ ok: true, headers: new Headers({ "content-type": "video/mp4" }), arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateVideo({ prompt: "cat", duration: 5, ratio: "16:9" } as any)).rejects.toThrow("Agnes video submit failed: 401");
+    vi.unstubAllEnvs();
   });
 });

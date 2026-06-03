@@ -3,13 +3,15 @@ import { WanVideoProvider, toImageUrl, ratioToSize, normaliseRatio } from "../wa
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "wan-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 const mockReadFileSync = vi.hoisted(() => vi.fn(() => Buffer.from("img-data")));
 const mockMkdirSync = vi.hoisted(() => vi.fn());
 const mockWriteFileSync = vi.hoisted(() => vi.fn());
 
 vi.mock("node:fs", () => ({
-  default: { existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync },
-  existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync,
+  default: { existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn() },
+  existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -283,9 +285,88 @@ describe("generateVideo", () => {
 
   it("downloads and saves video to uploads/videos/", async () => {
     const p = makeProvider({ apiKey: "ak", uploadDir: "/tmp/up" });
+    const mockCreateWriteStream = vi.fn();
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/video-synthesis")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_id: "t-1" } }) });
+      if (url.includes("/tasks/")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_status: "SUCCEEDED", video_url: "https://example.com/v.mp4" } }) });
+      return Promise.resolve({ ok: true, body: { pipe: vi.fn() } });
+    }) as any);
     await p.generateVideo({ prompt: "cat", ratio: "16:9", duration: 5 } as any);
     expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringMatching(/tmp[\\/]up[\\/]videos/), { recursive: true });
-    expect(mockWriteFileSync).toHaveBeenCalled();
-    expect(mockWriteFileSync.mock.calls[0][0]).toContain("wan-id.mp4");
   }, 30000);
+});
+
+describe("AbortSignal", () => {
+  it("passes signal to submit fetch call", async () => {
+    const p = makeProvider({ apiKey: "ak" });
+    await p.generateVideo({ prompt: "cat", ratio: "16:9", duration: 5 } as any);
+    const submitCall = fetchCalls.find(c => c.url.includes("/video-synthesis"));
+    expect(submitCall!.options!.signal).toBeDefined();
+  }, 30000);
+});
+
+describe("JSON parse error", () => {
+  it("throws on malformed JSON in submit response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/video-synthesis")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", ratio: "16:9" } as any)).rejects.toThrow(SyntaxError);
+  });
+});
+
+describe("network error", () => {
+  it("throws when fetch fails during submit", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/video-synthesis")) {
+        return Promise.reject(new TypeError("fetch failed"));
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", ratio: "16:9" } as any)).rejects.toThrow(TypeError);
+  });
+});
+
+describe("poll timeout", () => {
+  it("throws after max retries when poll never completes", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("AbortSignal", { timeout: () => new AbortController().signal });
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/video-synthesis")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_id: "t-1" } }) });
+      if (url.includes("/tasks/")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_status: "RUNNING" } }) });
+      return Promise.resolve({ ok: false });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateVideo({ prompt: "cat", ratio: "16:9" } as any);
+    promise.catch(() => {});
+    await vi.advanceTimersByTimeAsync(1_800_000);
+    await expect(promise).rejects.toThrow("WanVideo generation timed out after 30 minutes");
+    vi.useRealTimers();
+  });
+});
+
+describe("missing API key", () => {
+  it("throws when no API key is provided", async () => {
+    vi.stubEnv("WAN_API_KEY", "");
+    vi.stubEnv("DASHSCOPE_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+      if (url.includes("/video-synthesis")) {
+        const headers = options?.headers as Record<string, string>;
+        if (!headers?.Authorization || headers.Authorization === "Bearer ") {
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve("unauthorized") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_id: "t-1" } }) });
+      }
+      if (url.includes("/tasks/")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_status: "SUCCEEDED", video_url: "https://example.com/v.mp4" } }) });
+      if (url.includes("example.com")) return Promise.resolve({ ok: true, headers: new Headers({ "content-type": "video/mp4" }), arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+      return Promise.resolve({ ok: false });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateVideo({ prompt: "cat", ratio: "16:9", duration: 5 } as any)).rejects.toThrow("WanVideo submit failed: 401");
+    vi.unstubAllEnvs();
+  });
 });

@@ -1,6 +1,7 @@
 import type { AIProvider, TextOptions, ImageOptions } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 // ── Model family detection ──────────────────────────────────────────────────
@@ -173,6 +174,7 @@ export class DashScopeImageProvider implements AIProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(180_000),
       },
     );
 
@@ -201,19 +203,18 @@ export class DashScopeImageProvider implements AIProvider {
     }
 
     // Download and save to local storage
-    const imageRes = await fetch(imageUrl);
+    const imageRes = await fetch(imageUrl, { signal: AbortSignal.timeout(60_000) });
     if (!imageRes.ok) {
       throw new Error(
         `DashScope image: failed to download image (${imageRes.status})`,
       );
     }
-    const buffer = Buffer.from(await imageRes.arrayBuffer());
     const ext = imageUrl.split("?")[0].split(".").pop() || "png";
     const filename = `${genId()}.${ext}`;
     const dir = path.join(this.uploadDir, "images");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    fs.writeFileSync(filepath, buffer);
+    await pipeline(imageRes.body! as any, createWriteStream(filepath));
 
     console.log(`[DashScopeImage] Saved to ${filepath}`);
     return filepath;

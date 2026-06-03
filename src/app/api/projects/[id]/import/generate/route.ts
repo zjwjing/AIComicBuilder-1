@@ -67,11 +67,12 @@ export async function POST(
   let relationCount = 0;
   const charIdByName = new Map<string, string>();
 
-  await db.transaction(async (tx) => {
+await db.transaction(async (tx) => {
     // 1. Create all characters
-    for (const char of body.characters) {
+    const charRows = body.characters.map((char) => {
       const charId = genId();
-      await tx.insert(characters).values({
+      charIdByName.set(char.name.toLowerCase().trim(), charId);
+      return {
         id: charId,
         projectId,
         name: char.name,
@@ -79,64 +80,65 @@ export async function POST(
         visualHint: char.visualHint ?? "",
         scope: char.scope,
         episodeId: null,
-      });
-      charIdByName.set(char.name.toLowerCase().trim(), charId);
-    }
+      };
+    });
+    await tx.insert(characters).values(charRows);
 
     // 2. Create character relationships
     if (body.relationships?.length) {
-      for (const rel of body.relationships) {
-        const aId = charIdByName.get(rel.characterA.toLowerCase().trim());
-        const bId = charIdByName.get(rel.characterB.toLowerCase().trim());
-        if (aId && bId && aId !== bId) {
-          try {
-            await tx.insert(characterRelations).values({
+      const relRows = body.relationships
+        .map((rel) => {
+          const aId = charIdByName.get(rel.characterA.toLowerCase().trim());
+          const bId = charIdByName.get(rel.characterB.toLowerCase().trim());
+          if (aId && bId && aId !== bId) {
+            return {
               id: genId(),
               projectId,
               characterAId: aId,
               characterBId: bId,
               relationType: rel.relationType || "neutral",
               description: rel.description || "",
-            });
-          } catch {
-            // skip duplicates
+            };
           }
+          return null;
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+      if (relRows.length > 0) {
+        try {
+          await tx.insert(characterRelations).values(relRows);
+        } catch {
+          // skip duplicates
         }
       }
     }
 
     // 3. Create episodes
-    for (const ep of body.episodes) {
-      const [row] = await tx
-        .insert(episodes)
-        .values({
-          id: genId(),
-          projectId,
-          title: ep.title,
-          description: ep.description || "",
-          keywords: ep.keywords || "",
-          idea: ep.idea || "",
-          sequence: seq++,
-        })
-        .returning();
-      created.push(row);
-    }
+    const epRows = body.episodes.map((ep) => ({
+      id: genId(),
+      projectId,
+      title: ep.title,
+      description: ep.description || "",
+      keywords: ep.keywords || "",
+      idea: ep.idea || "",
+      sequence: seq++,
+    }));
+    created.push(...(await tx.insert(episodes).values(epRows).returning()));
 
     // 4. Create episode_characters relations
-    for (let i = 0; i < body.episodes.length; i++) {
-      const epData = body.episodes[i];
+    const ecRows = body.episodes.flatMap((epData, i) => {
       const episodeId = created[i]?.id;
-      if (!episodeId || !epData.characters) continue;
-      for (const charName of epData.characters) {
-        const charId = charIdByName.get(charName.toLowerCase().trim());
-        if (!charId) continue;
-        await tx.insert(episodeCharacters).values({
-          id: genId(),
-          episodeId,
-          characterId: charId,
-        });
-        relationCount++;
-      }
+      if (!episodeId || !epData.characters) return [];
+      return epData.characters
+        .map((charName) => {
+          const charId = charIdByName.get(charName.toLowerCase().trim());
+          if (!charId) return null;
+          relationCount++;
+          return { id: genId(), episodeId, characterId: charId };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
+    });
+    if (ecRows.length > 0) {
+      await tx.insert(episodeCharacters).values(ecRows);
     }
   });
 

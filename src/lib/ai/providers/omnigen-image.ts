@@ -1,6 +1,7 @@
 import type { AIProvider, TextOptions, ImageOptions } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 type GradioEvent =
@@ -212,12 +213,11 @@ export class OmnigenImageProvider implements AIProvider {
       throw new Error(`OmniGen image download failed: ${res.status}`);
     }
 
-    const buffer = Buffer.from(await res.arrayBuffer());
     const filename = `${genId()}.png`;
     const dir = path.join(this.uploadDir, "images");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    fs.writeFileSync(filepath, buffer);
+    await pipeline(res.body! as any, createWriteStream(filepath));
 
     return filepath;
   }

@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import type { AIProvider, TextOptions, ImageOptions } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 function toErrorMessage(err: unknown): string {
@@ -81,8 +82,8 @@ export class OpenAIProvider implements AIProvider {
       maxRetries: 0,
     });
     this.imageClient = new OpenAI({
-      apiKey: process.env.IMAGEGEN_API_KEY || params?.apiKey || process.env.OPENAI_API_KEY,
-      baseURL: process.env.IMAGEGEN_BASE_URL || this.baseURL,
+      apiKey: params?.apiKey || process.env.IMAGEGEN_API_KEY || process.env.OPENAI_API_KEY,
+      baseURL: params?.baseURL || process.env.IMAGEGEN_BASE_URL || this.baseURL,
       timeout,
       maxRetries: 0,
     });
@@ -101,15 +102,19 @@ export class OpenAIProvider implements AIProvider {
 
   private async fetchImageToFile(url: string): Promise<string> {
     console.log("[OpenAIProvider:image] downloading generated image", { url });
-    const imageResponse = await fetch(url);
+    const imageResponse = await fetch(url, { signal: AbortSignal.timeout(120_000) });
     if (!imageResponse.ok) {
       const body = await imageResponse.text().catch(() => "");
       throw new Error(`Failed to download generated image: ${imageResponse.status} ${body}`);
     }
     const contentType = imageResponse.headers.get("content-type") || "";
     const ext = contentType.includes("jpeg") ? "jpg" : "png";
-    const buffer = Buffer.from(await imageResponse.arrayBuffer());
-    return this.saveImageBuffer(buffer, ext);
+    const filename = `${genId()}.${ext}`;
+    const dir = path.join(this.uploadDir, "frames");
+    fs.mkdirSync(dir, { recursive: true });
+    const filepath = path.join(dir, filename);
+    await pipeline(imageResponse.body! as any, createWriteStream(filepath));
+    return filepath;
   }
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {

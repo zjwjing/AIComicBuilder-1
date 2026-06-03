@@ -3,17 +3,21 @@ import { SeedanceProvider } from "../seedance";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "seedance-test-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     existsSync: vi.fn(() => true),
     readFileSync: vi.fn(() => Buffer.from("img")),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   existsSync: vi.fn(() => true),
   readFileSync: vi.fn(() => Buffer.from("img")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 const mockSubmitJson = vi.hoisted(() => vi.fn().mockResolvedValue({ id: "task-123" }));
@@ -258,5 +262,73 @@ describe("generateVideo", () => {
     const body = JSON.parse(submitCall!.options!.body as string);
     const refImages = body.content.filter((c: any) => c.role === "reference_image");
     expect(refImages).toHaveLength(9);
+  });
+
+  it("passes signal to fetch calls", async () => {
+    vi.useFakeTimers();
+    const p = makeProvider({ apiKey: "test-key" });
+    const promise = p.generateVideo({ prompt: "a cat", initialImage: "ref.png", duration: 5, ratio: "16:9" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await promise;
+    for (const entry of fetchCalls) {
+      expect(entry.options).toHaveProperty("signal");
+    }
+  });
+
+  it("throws on JSON parse error from submit response", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/tasks") && !url.includes("/tasks/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+    mockSubmitJson.mockRejectedValue(new SyntaxError("Unexpected token"));
+    const p = makeProvider({ apiKey: "test-key" });
+    let caught: any;
+    const promise = p.generateVideo({ prompt: "a cat", initialImage: "ref.png", duration: 5, ratio: "16:9" }).catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    expect(caught).toBeInstanceOf(SyntaxError);
+  });
+
+  it("throws on network error", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("network error"))) as any);
+    const p = makeProvider({ apiKey: "test-key" });
+    let caught: any;
+    const promise = p.generateVideo({ prompt: "a cat", initialImage: "ref.png", duration: 5, ratio: "16:9" }).catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    expect(caught).toBeInstanceOf(TypeError);
+  });
+
+  it("throws when poll times out", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/tasks/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "running" }) });
+      }
+      if (url.includes("/tasks")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: "task-123" }) });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    mockPollJson.mockResolvedValue({ status: "running" });
+    const p = makeProvider({ apiKey: "test-key" });
+    let caught: any;
+    const promise = p.generateVideo({ prompt: "a cat", initialImage: "ref.png", duration: 5, ratio: "16:9" }).catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(600_100);
+    vi.useRealTimers();
+    expect(caught?.message).toContain("Seedance generation timed out after 10 minutes");
+  }, 30_000);
+
+  it("handles missing apiKey gracefully", () => {
+    vi.stubEnv("SEEDANCE_API_KEY", "");
+    vi.stubEnv("SEEDANCE_BASE_URL", "");
+    vi.stubEnv("SEEDANCE_MODEL", "");
+    const p = makeProvider();
+    expect((p as any).apiKey).toBe("");
+    vi.unstubAllEnvs();
   });
 });

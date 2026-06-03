@@ -1,6 +1,7 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 // Convert a local file path to a data: URL; http(s) URLs are returned as-is
@@ -98,6 +99,7 @@ export class WanVideoProvider implements VideoProvider {
           "X-DashScope-Async": "enable",
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       }
     );
 
@@ -122,16 +124,15 @@ export class WanVideoProvider implements VideoProvider {
     const videoUrl = await this.pollForResult(taskId);
 
     // Download and persist video
-    const videoRes = await fetch(videoUrl);
+    const videoRes = await fetch(videoUrl, { signal: AbortSignal.timeout(120_000) });
     if (!videoRes.ok) {
       throw new Error(`WanVideo: failed to download video (${videoRes.status})`);
     }
-    const buffer = Buffer.from(await videoRes.arrayBuffer());
     const filename = `${genId()}.mp4`;
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    fs.writeFileSync(filepath, buffer);
+    await pipeline(videoRes.body! as any, createWriteStream(filepath));
 
     console.log(`[WanVideo] Saved to ${filepath}`);
     return { filePath: filepath };
@@ -259,6 +260,7 @@ export class WanVideoProvider implements VideoProvider {
 
       const res = await fetch(`${this.baseUrl}/tasks/${taskId}`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(15_000),
       });
 
       if (!res.ok) {

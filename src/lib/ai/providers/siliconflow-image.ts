@@ -1,6 +1,7 @@
 import type { AIProvider, ImageOptions } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 const ASPECT_MAP: Record<string, string> = {
@@ -115,13 +116,12 @@ export class SiliconFlowImageProvider implements AIProvider {
       throw new Error(`SiliconFlow: download failed (${imageRes.status})`);
     }
 
-    const buffer = Buffer.from(await imageRes.arrayBuffer());
     const ext = imageUrl.split("?")[0].split(".").pop() || "png";
     const filename = `${genId()}.${ext}`;
     const dir = path.join(this.uploadDir, "images");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    fs.writeFileSync(filepath, buffer);
+    await pipeline(imageRes.body! as any, createWriteStream(filepath));
 
     console.log(`[SiliconFlow] Saved: ${filepath}`);
     return filepath;

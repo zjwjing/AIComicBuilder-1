@@ -1,6 +1,7 @@
 # Progress
 
 ## Completed
+- **Session 2026-06-03 — All video/image downloads converted to streaming**: Replaced `Buffer.from(await response.arrayBuffer())` + `fs.writeFileSync` with `pipeline(response.body!, createWriteStream(filepath))` across 16 provider files (8 video + 8 image). Updated 16 test files to mock `createWriteStream` + `pipeline`. Fixed `dashscope-image.test.ts` assertion from `writeFileSync` → `pipeline`. **Files changed**: `agnes-video.ts`, `aivideo-video.ts`, `openai.ts`, `siliconflow-image.ts`, `sensenova-image.ts`, `kling-image.ts`, `kling-video.ts`, `seedance.ts`, `ucloud-seedance.ts`, `framepack-video.ts`, `wan-video.ts`, `dashscope-image.ts`, `comfyui-image.ts`, `comfyui-video.ts`, `asxs-image.ts`, `omnigen-image.ts`. lint ✅ tsc ✅ build ✅
 - **Session 2026-06-01 — 生产构建 DB 修复 + Agnes 免费 API 验证 + 日志审查**: 
   - **生产 standalone 构建修复**: `scripts/copy-env-to-standalone.mjs` 现在同时复制 `drizzle/` 迁移文件夹 + `data/` 数据库到 `.next/standalone/`，并把 `DATABASE_URL` 从绝对路径重写为相对路径；`src/instrumentation.ts` 在生产模式下自动用 `dotenv` 加载 `.env`（独立服务器不会自动加载）。根因：`SqliteError: no such table: projects` — 缺少迁移文件 + .env 未加载导致创建空数据库。
   - **Agnes 免费 API 验证**: `GET /v1/models` ✅ (列出 5 个模型)，但文字（503 model_not_found）、图片（503）、视频（500 upstream error）全部不可用 — free key 无实际后端通道，需付费 Token Plan（$4/月起）。
@@ -109,3 +110,25 @@
 ## Known Issues
 - `next build` webpack 模式在 ComfyUI（~21GB）运行时内存不足挂起，改用 `--turbo` 参数即可；`package.json` 已默认带上 `--turbo --no-lint`
 - `verify-videos.js` excluded from lint (utility script)
+- Vitest fake timer + rejects.toThrow 会产生 unhandled rejection 假阳性（测试本身通过）
+
+## 2026-06-02 Session — Provider 全量审计 + 代码质量修复 + 测试覆盖加固 (+80 tests)
+- **Provider 一致性审计完毕**: 20 providers 全部 √，端点/响应与真实 API 对齐，0 response shape 不匹配
+- **3 CRITICAL, 5 HIGH, 2 MEDIUM 问题全部修复**:
+  - CRITICAL: comfyui-image.ts (6 fetch calls 全部缺 AbortSignal.timeout)
+  - CRITICAL: comfyui-video.ts (硬编码 `M:\ComfyUI...\output` → platform-aware；checkpoint 路径反斜杠 → 前斜杠)
+  - CRITICAL: ucloud-seedance.ts (缺少 `process.env.UCLOUD_API_KEY` fallback)
+  - HIGH: dashscope-image, kling-image, kling-video, seedance, wan-video (全部 fetch 补 timeout)
+  - MEDIUM: openai.ts, sensenova-image.ts (补 timeout)
+  - 同时修复 ltx-workflows.ts 全部 6 处反斜杠路径
+- **`.env.example` 更新**: 新增 `UCLOUD_API_KEY`, `COMFYUI_OUTPUT_DIR`, `COMFYUI_LTX_CHECKPOINT`
+- **测试覆盖审计 + 加补**: 发现 4 个关键缺口 (0% 覆盖率) → 全部填补
+  - AbortSignal 传播测试: 0% → 89% (17/19 providers)
+  - JSON 解析错误测试: 0% → 84% (16/19)
+  - 轮询超时/最大重试测试: 0% → 100% (9/9 polling providers)
+  - 缺失 API key 验证测试: 0% → 86% (12/14 applicable providers)
+  - 网络错误测试: 5% → 84% (16/19)
+  - 总计新增 ~80 tests，全部通过
+  - 3 unhandled rejections 是已知的 Agnes 假定时器假阳性
+- **验证**: lint ✅ tsc ✅ build ✅ 全部 489 tests ✅
+- **修复 IMAGEGEN_API_KEY 优先级问题**: `openai.ts` 中 `process.env.IMAGEGEN_API_KEY` 无条件覆盖 `params.apiKey`，导致 Agnes 协议配置的 key 被 ASXS 全局 key 冲掉 → 401。修复为 `params.apiKey` 优先，`IMAGEGEN_*` 仅作 fallback。测试同步更新。lint ✅ tsc ✅ 35/35 ✅

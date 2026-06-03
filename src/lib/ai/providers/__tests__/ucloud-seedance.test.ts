@@ -3,15 +3,19 @@ import { UCloudSeedanceProvider } from "../ucloud-seedance";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "ucs-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     readFileSync: vi.fn(() => Buffer.from("img")),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   readFileSync: vi.fn(() => Buffer.from("img")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -249,5 +253,69 @@ describe("generateVideo", () => {
     const body = JSON.parse(submitCall!.options!.body as string);
     expect(body.parameters.duration).toBe(5);
     expect(body.parameters.ratio).toBe("16:9");
+  });
+
+  it("passes signal to fetch calls", async () => {
+    vi.useFakeTimers();
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateVideo({ prompt: "cat", firstFrame: "f.png", lastFrame: "l.png" } as any);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await promise;
+    for (const entry of fetchCalls) {
+      expect(entry.options).toHaveProperty("signal");
+    }
+  });
+
+  it("throws on JSON parse error from submit response", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/tasks/submit")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    let caught: any;
+    const promise = p.generateVideo({ prompt: "cat", firstFrame: "f.png", lastFrame: "l.png" } as any).catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    expect(caught).toBeInstanceOf(SyntaxError);
+  });
+
+  it("throws on network error", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("network error"))) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    let caught: any;
+    const promise = p.generateVideo({ prompt: "cat", firstFrame: "f.png", lastFrame: "l.png" } as any).catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    vi.useRealTimers();
+    expect(caught).toBeInstanceOf(TypeError);
+  });
+
+  it("throws when poll times out", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/tasks/status")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_status: "Pending" } }) });
+      }
+      if (url.includes("/tasks/submit")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { task_id: "t-1" } }) });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    let caught: any;
+    const promise = p.generateVideo({ prompt: "cat", firstFrame: "f.png", lastFrame: "l.png" } as any).catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(1_800_100);
+    vi.useRealTimers();
+    expect(caught?.message).toContain("UCloudSeedance generation timed out after 30 minutes");
+  }, 30_000);
+
+  it("handles missing apiKey gracefully", () => {
+    vi.stubEnv("UCLOUD_API_KEY", "");
+    const p = makeProvider();
+    expect((p as any).apiKey).toBe("");
+    vi.unstubAllEnvs();
   });
 });

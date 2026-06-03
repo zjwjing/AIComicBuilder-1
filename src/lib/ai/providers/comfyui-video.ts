@@ -1,7 +1,9 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult, CameraControl, SigmaPreset } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import process from "node:process";
 
 import { id as genId } from "@/lib/id";
 import { buildLTXi2vT2vWorkflow, buildLTXFlf2vWorkflow, getSigmaSchedules, getCameraLoRAName } from "./ltx-workflows";
@@ -93,7 +95,7 @@ export function buildManualStyleSegmentLengths(durationSec: number, fps: number,
   );
 }
 
-const COMFYUI_OUTPUT_DIR = process.env.COMFYUI_OUTPUT_DIR || "M:\\ComfyUI_windows_portable\\ComfyUI\\output";
+const COMFYUI_OUTPUT_DIR = process.env.COMFYUI_OUTPUT_DIR || (process.platform === "win32" ? "M:\\ComfyUI_windows_portable\\ComfyUI\\output" : "./comfyui-output");
 
 export class ComfyUIVideoProvider implements VideoProvider {
   private baseUrl: string;
@@ -122,7 +124,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
   }
 
   private getRequiredModels(): ModelRef[] {
-    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
+    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors";
     const models: ModelRef[] = [{ path: ckptName, type: "checkpoint" }];
     if (this.model === "wan-i2v") {
       models.push(
@@ -228,7 +230,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
     const template = JSON.parse(raw) as Record<string, ComfyNode>;
 
     // Replace CKPT_PLACEHOLDER in parsed object (avoids JSON string escaping issues with backslash paths)
-    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
+    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors";
     for (const node of Object.values(template)) {
       for (const [k, v] of Object.entries(node.inputs)) {
         if (v === "CKPT_PLACEHOLDER") node.inputs[k] = ckptName;
@@ -345,7 +347,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
     };
     raw = raw.replaceAll("{{timelineData}}", JSON.stringify(tl));
 
-    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3\\ltx-2.3-22b-dev-fp8.safetensors";
+    const ckptName = process.env.COMFYUI_LTX_CHECKPOINT || "LTX2.3/ltx-2.3-22b-dev-fp8.safetensors";
     raw = raw.replaceAll("CKPT_PLACEHOLDER", ckptName.replace(/\\/g, "\\\\"));
 
     const template = JSON.parse(raw) as Record<string, ComfyNode>;
@@ -703,12 +705,11 @@ export class ComfyUIVideoProvider implements VideoProvider {
       throw new Error(`ComfyUI video download failed: ${videoRes.status}`);
     }
 
-    const buffer = Buffer.from(await videoRes.arrayBuffer());
     const filename = `${genId()}.mp4`;
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    fs.writeFileSync(filepath, buffer);
+    await pipeline(videoRes.body! as any, createWriteStream(filepath));
     console.log(`  [generateVideo] Saved: ${filepath}`);
 
     return { filePath: filepath };

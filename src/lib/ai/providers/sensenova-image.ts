@@ -1,6 +1,7 @@
 import type { AIProvider, TextOptions, ImageOptions } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 interface SenseNovaImageResponse {
@@ -86,15 +87,19 @@ export class SenseNovaImageProvider implements AIProvider {
   }
 
   private async downloadImage(url: string): Promise<string> {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`SenseNova image download failed: ${res.status} ${body}`);
     }
     const contentType = res.headers.get("content-type") || "image/png";
     const ext = contentType.includes("jpeg") ? "jpg" : "png";
-    const buffer = Buffer.from(await res.arrayBuffer());
-    return this.saveImageBuffer(buffer, ext);
+    const filename = `${genId()}.${ext}`;
+    const dir = path.join(this.uploadDir, "frames");
+    fs.mkdirSync(dir, { recursive: true });
+    const filepath = path.join(dir, filename);
+    await pipeline(res.body! as any, createWriteStream(filepath));
+    return filepath;
   }
 
   async generateImage(prompt: string, options?: ImageOptions): Promise<string> {
@@ -116,6 +121,7 @@ export class SenseNovaImageProvider implements AIProvider {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(180_000),
     });
 
     if (!res.ok) {

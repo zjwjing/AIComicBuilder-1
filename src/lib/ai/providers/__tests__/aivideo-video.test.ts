@@ -3,15 +3,19 @@ import { AivideoVideoProvider } from "../aivideo-video";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "av-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     readFileSync: vi.fn(() => Buffer.from("img")),
     mkdirSync: vi.fn(),
     writeFileSync: vi.fn(),
+    createWriteStream: vi.fn(),
   },
   readFileSync: vi.fn(() => Buffer.from("img")),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -247,5 +251,82 @@ describe("generateVideo", () => {
     const promise = p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any);
     await vi.advanceTimersByTimeAsync(5_000);
     await promise;
+  });
+});
+
+describe("AbortSignal", () => {
+  it("passes signal to submit fetch call", async () => {
+    vi.useFakeTimers();
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await promise;
+    const submitCall = fetchCalls.find(c => c.url.includes("/api/v1/generate/"));
+    expect(submitCall!.options!.signal).toBeDefined();
+  });
+});
+
+describe("JSON parse error", () => {
+  it("throws on malformed JSON in submit response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/api/v1/generate/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any)).rejects.toThrow(SyntaxError);
+  });
+});
+
+describe("network error", () => {
+  it("throws when fetch fails during submit", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/api/v1/generate/")) {
+        return Promise.reject(new TypeError("fetch failed"));
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any)).rejects.toThrow(TypeError);
+  });
+});
+
+describe("poll timeout", () => {
+  it("throws after max retries when poll never completes", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("AbortSignal", { timeout: () => new AbortController().signal });
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/api/v1/tasks/")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "PROCESSING" }) });
+      if (url.includes("/api/v1/generate/")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "SUBMITTED", taskId: "t-1" }) });
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any);
+    promise.catch(() => {});
+    await vi.advanceTimersByTimeAsync(600_000);
+    await expect(promise).rejects.toThrow("Aivideo generation timed out after 10 minutes");
+    vi.useRealTimers();
+  });
+});
+
+describe("missing API key", () => {
+  it("throws when no API key is provided", async () => {
+    vi.stubEnv("AIVIDEO_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+      if (url.includes("/api/v1/generate/")) {
+        const headers = options?.headers as Record<string, string>;
+        if (!headers?.key || headers.key === "") {
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve("unauthorized") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "SUBMITTED", taskId: "t-1" }) });
+      }
+      if (url.includes("/api/v1/tasks/")) return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: "COMPLETED", output: { url: "https://example.com/v.mp4" } }) });
+      if (url.includes("example.com")) return Promise.resolve({ ok: true, headers: new Headers({ "content-type": "video/mp4" }), arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 5, ratio: "16:9" } as any)).rejects.toThrow("Aivideo submit failed: 401");
+    vi.unstubAllEnvs();
   });
 });

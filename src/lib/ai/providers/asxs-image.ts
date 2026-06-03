@@ -1,8 +1,9 @@
 import OpenAI from "openai";
 import { toFile } from "openai";
 import type { AIProvider, ImageOptions } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 const ASPECT_SIZE_MAP: Record<string, string> = {
@@ -181,7 +182,11 @@ export class ASXSImageProvider implements AIProvider {
     }
     const contentType = imageResponse.headers.get("content-type") || "";
     const ext = contentType.includes("jpeg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
-    const buffer = Buffer.from(await imageResponse.arrayBuffer());
-    return this.saveImageBuffer(buffer, ext);
+    const filename = `${genId()}.${ext}`;
+    const dir = path.join(this.uploadDir, "images");
+    fs.mkdirSync(dir, { recursive: true });
+    const filepath = path.join(dir, filename);
+    await pipeline(imageResponse.body! as any, createWriteStream(filepath));
+    return filepath;
   }
 }

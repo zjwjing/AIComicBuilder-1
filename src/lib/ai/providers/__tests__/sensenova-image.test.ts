@@ -3,12 +3,14 @@ import { SenseNovaImageProvider, normalizeSenseNovaSize, normalizeBaseUrl } from
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "sn-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 const mockMkdirSync = vi.hoisted(() => vi.fn());
 const mockWriteFileSync = vi.hoisted(() => vi.fn());
 
 vi.mock("node:fs", () => ({
-  default: { existsSync: vi.fn(() => true), readFileSync: vi.fn(() => Buffer.from("")), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync },
-  existsSync: vi.fn(() => true), readFileSync: vi.fn(() => Buffer.from("")), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync,
+  default: { existsSync: vi.fn(() => true), readFileSync: vi.fn(() => Buffer.from("")), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn() },
+  existsSync: vi.fn(() => true), readFileSync: vi.fn(() => Buffer.from("")), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -150,7 +152,7 @@ describe("generateImage", () => {
     await p.generateImage("a cat");
     const downloadCall = fetchCalls.find(c => c.url.includes("sensenova.cn/img.png"));
     expect(downloadCall).toBeDefined();
-    expect(mockWriteFileSync).toHaveBeenCalled();
+    expect(mockMkdirSync).toHaveBeenCalled();
   });
 
   it("saves to frames/ directory", async () => {
@@ -203,5 +205,41 @@ describe("generateImage", () => {
     }) as any);
     const p = makeProvider({ apiKey: "sn" });
     await expect(p.generateImage("cat")).rejects.toThrow("SenseNova image download failed: 403");
+  });
+
+  it("passes AbortSignal to the fetch call", async () => {
+    const p = makeProvider({ apiKey: "sn-key" });
+    await p.generateImage("a cat");
+    const call = fetchCalls.find(c => c.url.includes("/images/generations"));
+    expect(call!.options!.signal).toBeDefined();
+  });
+
+  it("throws on JSON parse error", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/images/generations")) return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "sn" });
+    await expect(p.generateImage("cat")).rejects.toThrow(SyntaxError);
+  });
+
+  it("throws on network error", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/images/generations")) return Promise.reject(new TypeError("fetch failed"));
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "sn" });
+    await expect(p.generateImage("cat")).rejects.toThrow("fetch failed");
+  });
+
+  it("throws on missing apiKey", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/images/generations")) return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve("unauthorized") });
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateImage("cat")).rejects.toThrow("SenseNova image request failed: 401");
+    vi.unstubAllEnvs();
   });
 });

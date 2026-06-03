@@ -1,6 +1,7 @@
 import type { AIProvider, TextOptions, ImageOptions } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 import { preflightWorkflow } from "@/lib/comfyui/preflight";
 import { ErrorCodes } from "@/lib/comfyui/errors";
@@ -73,6 +74,7 @@ export class ComfyUIImageProvider implements AIProvider {
       method: "POST",
       body: form,
       headers: this.getAuthHeaders(),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -321,6 +323,7 @@ export class ComfyUIImageProvider implements AIProvider {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const res = await fetch(`${this.baseUrl}/history/${promptId}`, {
         headers: this.getAuthHeaders(),
+        signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) continue;
 
@@ -361,6 +364,7 @@ export class ComfyUIImageProvider implements AIProvider {
         method: "POST",
         headers: { "Content-Type": "application/json", ...this.getAuthHeaders() },
         body: JSON.stringify({ prompt: workflow }),
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!submitRes.ok) {
@@ -382,6 +386,7 @@ export class ComfyUIImageProvider implements AIProvider {
       });
       const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
         headers: this.getAuthHeaders(),
+        signal: AbortSignal.timeout(120_000),
       });
       if (!imageRes.ok) {
         throw new Error(`ComfyUI qwen-edit download failed: ${imageRes.status}`);
@@ -389,12 +394,11 @@ export class ComfyUIImageProvider implements AIProvider {
 
       const contentType = imageRes.headers.get("content-type") || "image/png";
       const ext = contentType.includes("jpeg") ? "jpg" : "png";
-      const buffer = Buffer.from(await imageRes.arrayBuffer());
       const filename = `${genId()}.${ext}`;
       const dir = path.join(this.uploadDir, "frames");
       fs.mkdirSync(dir, { recursive: true });
       const filepath = path.join(dir, filename);
-      fs.writeFileSync(filepath, buffer);
+      await pipeline(imageRes.body! as any, createWriteStream(filepath));
       return filepath;
     }
 
@@ -404,6 +408,7 @@ export class ComfyUIImageProvider implements AIProvider {
       method: "POST",
       headers: { "Content-Type": "application/json", ...this.getAuthHeaders() },
       body: JSON.stringify({ prompt: workflow }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!submitRes.ok) {
@@ -425,6 +430,7 @@ export class ComfyUIImageProvider implements AIProvider {
     });
     const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
       headers: this.getAuthHeaders(),
+      signal: AbortSignal.timeout(120_000),
     });
     if (!imageRes.ok) {
       throw new Error(`ComfyUI image download failed: ${imageRes.status}`);
@@ -432,12 +438,11 @@ export class ComfyUIImageProvider implements AIProvider {
 
     const contentType = imageRes.headers.get("content-type") || "image/png";
     const ext = contentType.includes("jpeg") ? "jpg" : "png";
-    const buffer = Buffer.from(await imageRes.arrayBuffer());
     const filename = `${genId()}.${ext}`;
     const dir = path.join(this.uploadDir, "frames");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    fs.writeFileSync(filepath, buffer);
+    await pipeline(imageRes.body! as any, createWriteStream(filepath));
 
     return filepath;
   }

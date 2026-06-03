@@ -18,7 +18,13 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
 
   let response: Response;
   try {
-    response = await fetch(url, { ...options, headers });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      response = await fetch(url, { ...options, headers, signal: options.signal || controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
   } catch (err) {
     throw new ApiError(0, `网络请求失败，请检查服务器是否在运行: ${err instanceof Error ? err.message : String(err)}`);
   }

@@ -3,12 +3,15 @@ import { DashScopeImageProvider, getModelFamily, resolveSize } from "../dashscop
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "ds-id") }));
 
+const mockPipeline = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock("node:stream/promises", () => ({ pipeline: mockPipeline }));
+
 const mockMkdirSync = vi.hoisted(() => vi.fn());
 const mockWriteFileSync = vi.hoisted(() => vi.fn());
 
 vi.mock("node:fs", () => ({
-  default: { existsSync: vi.fn(() => true), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync },
-  existsSync: vi.fn(() => true), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync,
+  default: { existsSync: vi.fn(() => true), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn() },
+  existsSync: vi.fn(() => true), mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -224,9 +227,64 @@ describe("generateImage", () => {
 
   it("downloads and saves file", async () => {
     const p = makeProvider({ apiKey: "ds", uploadDir: "/tmp/up" });
-    await p.generateImage("a cat");
+    const result = await p.generateImage("a cat");
     expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringMatching(/tmp[\\/]up[\\/]images/), { recursive: true });
-    expect(mockWriteFileSync).toHaveBeenCalled();
-    expect(mockWriteFileSync.mock.calls[0][0]).toContain("ds-id.png");
+    expect(mockPipeline).toHaveBeenCalled();
+    expect(result).toContain("ds-id.png");
+  });
+});
+
+describe("AbortSignal", () => {
+  it("passes signal to fetch call", async () => {
+    const p = makeProvider({ apiKey: "ds-key" });
+    await p.generateImage("a cat");
+    const call = fetchCalls.find(c => c.url.includes("/multimodal-generation/generation"));
+    expect(call!.options!.signal).toBeDefined();
+  });
+});
+
+describe("JSON parse error", () => {
+  it("throws on malformed JSON in response", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/multimodal-generation/generation")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ds" });
+    await expect(p.generateImage("cat")).rejects.toThrow(SyntaxError);
+  });
+});
+
+describe("network error", () => {
+  it("throws when fetch fails", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/multimodal-generation/generation")) {
+        return Promise.reject(new TypeError("fetch failed"));
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ds" });
+    await expect(p.generateImage("cat")).rejects.toThrow(TypeError);
+  });
+});
+
+describe("missing API key", () => {
+  it("throws when no API key is provided", async () => {
+    vi.stubEnv("DASHSCOPE_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+      if (url.includes("/multimodal-generation/generation")) {
+        const headers = options?.headers as Record<string, string>;
+        if (!headers?.Authorization || headers.Authorization === "Bearer ") {
+          return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve("unauthorized") });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ output: { choices: [{ message: { content: [{ image: "https://dashscope.aliyuncs.com/img.png" }] } }] } }) });
+      }
+      if (url.includes("aliyuncs.com") || url.includes("dashscope")) return Promise.resolve({ ok: true, headers: new Headers({ "content-type": "image/png" }), arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+      return Promise.resolve({ ok: false });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateImage("cat")).rejects.toThrow("DashScope image request failed: 401");
+    vi.unstubAllEnvs();
   });
 });

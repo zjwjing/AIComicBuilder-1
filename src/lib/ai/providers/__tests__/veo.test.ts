@@ -79,6 +79,13 @@ describe("constructor", () => {
     const p = makeProvider({ baseUrl: "https://example.com/v1/" });
     expect((p as any).client).toBeDefined();
   });
+
+  it("handles missing API key gracefully", () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    const p = makeProvider();
+    expect((p as any).client).toBeDefined();
+    vi.unstubAllEnvs();
+  });
 });
 
 describe("generateVideo", () => {
@@ -189,5 +196,20 @@ describe("generateVideo", () => {
 
     expect(mockClient.download).toHaveBeenCalled();
     expect(mockClient.download.mock.calls[0][0].file).toBe("files/abc123");
+  });
+
+  it("throws on network error from Veo SDK", async () => {
+    mockClient.generateVideos.mockRejectedValue(new Error("connect ETIMEDOUT"));
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 6, ratio: "16:9" } as any)).rejects.toThrow("connect ETIMEDOUT");
+  });
+
+  it("throws when operation returns no generatedVideos", async () => {
+    mockClient.generateVideos.mockResolvedValue({
+      done: true,
+      response: { generatedVideos: null, raiMediaFilteredCount: 0 },
+    });
+    const p = makeProvider({ apiKey: "ak" });
+    await expect(p.generateVideo({ prompt: "cat", firstFrame: "f.png", duration: 6, ratio: "16:9" } as any)).rejects.toThrow("No video returned from Veo");
   });
 });

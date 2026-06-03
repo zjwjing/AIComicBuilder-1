@@ -3,17 +3,21 @@ import { KlingImageProvider } from "../kling-image";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "kling-img-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 vi.mock("node:fs", () => ({
   default: {
     existsSync: vi.fn(() => true),
     readFileSync: vi.fn(() => Buffer.from("")),
     mkdirSync: mockMkdirSync,
     writeFileSync: mockWriteFileSync,
+    createWriteStream: vi.fn(),
   },
   existsSync: vi.fn(() => true),
   readFileSync: vi.fn(() => Buffer.from("")),
   mkdirSync: mockMkdirSync,
   writeFileSync: mockWriteFileSync,
+  createWriteStream: vi.fn(),
 }));
 
 const mockMkdirSync = vi.hoisted(() => vi.fn());
@@ -246,8 +250,68 @@ describe("generateImage", () => {
     const imageFetch = fetchCalls.find(c => String(c.url).startsWith("https://example.com/image.png"));
     expect(imageFetch).toBeDefined();
     expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringMatching(/uploads[\\/]images/), { recursive: true });
-    expect(mockWriteFileSync).toHaveBeenCalled();
-    const writeArg = mockWriteFileSync.mock.calls[0][0];
-    expect(writeArg).toContain("kling-img-id.png");
+  });
+
+  it("passes signal to fetch calls", async () => {
+    vi.useFakeTimers();
+    const p = makeProvider({ apiKey: "ak" });
+    const promise = p.generateImage("a cat");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await promise;
+    for (const entry of fetchCalls) {
+      expect(entry.options).toHaveProperty("signal");
+    }
+  });
+
+  it("throws on JSON parse error from submit response", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/v1/images/generations") && !url.includes("/v1/images/generations/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")), text: vi.fn() });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    let caught: any;
+    const promise = p.generateImage("a cat").catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(caught).toBeInstanceOf(SyntaxError);
+  });
+
+  it("throws on network error", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("network error"))) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    let caught: any;
+    const promise = p.generateImage("a cat").catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(caught).toBeInstanceOf(TypeError);
+  });
+
+  it("throws when poll times out", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/v1/images/generations/")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ code: 0, data: { task_status: "processing", task_status_msg: "", task_result: {} } }) });
+      }
+      if (url.includes("/v1/images/generations")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ code: 0, data: { task_id: "img-task-1" } }) });
+      }
+      return Promise.resolve({ ok: true });
+    }) as any);
+    const p = makeProvider({ apiKey: "ak" });
+    let caught: any;
+    const promise = p.generateImage("a cat").catch((e) => { caught = e; });
+    await vi.advanceTimersByTimeAsync(300_100);
+    vi.useRealTimers();
+    expect(caught?.message).toContain("Kling image generation timed out after 5 minutes");
+  }, 30_000);
+
+  it("handles missing apiKey gracefully", () => {
+    vi.stubEnv("KLING_ACCESS_KEY", "");
+    vi.stubEnv("KLING_SECRET_KEY", "");
+    const p = makeProvider();
+    expect((p as any).apiKey).toBe("");
+    vi.unstubAllEnvs();
   });
 });

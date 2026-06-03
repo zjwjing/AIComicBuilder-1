@@ -1,6 +1,7 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs from "node:fs";
+import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 
 export class AgnesVideoProvider implements VideoProvider {
@@ -74,12 +75,11 @@ export class AgnesVideoProvider implements VideoProvider {
       throw new Error(`Agnes video download failed: ${videoRes.status}`);
     }
 
-    const buffer = Buffer.from(await videoRes.arrayBuffer());
     const filename = `${genId()}.mp4`;
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    fs.writeFileSync(filepath, buffer);
+    await pipeline(videoRes.body! as any, createWriteStream(filepath));
 
     console.log(`[AgnesVideo] Saved: ${filepath}`);
     return { filePath: filepath };

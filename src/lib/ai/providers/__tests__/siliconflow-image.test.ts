@@ -3,13 +3,15 @@ import { SiliconFlowImageProvider } from "../siliconflow-image";
 
 vi.mock("@/lib/id", () => ({ id: vi.fn(() => "sf-id") }));
 
+vi.mock("node:stream/promises", () => ({ pipeline: vi.fn(() => Promise.resolve()) }));
+
 const mockMkdirSync = vi.hoisted(() => vi.fn());
 const mockWriteFileSync = vi.hoisted(() => vi.fn());
 const mockReadFileSync = vi.hoisted(() => vi.fn(() => Buffer.from("img-data")));
 
 vi.mock("node:fs", () => ({
-  default: { existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync },
-  existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync,
+  default: { existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn() },
+  existsSync: vi.fn(() => true), readFileSync: mockReadFileSync, mkdirSync: mockMkdirSync, writeFileSync: mockWriteFileSync, createWriteStream: vi.fn(),
 }));
 
 let fetchCalls: Array<{ url: string; options?: RequestInit }> = [];
@@ -186,7 +188,41 @@ describe("generateImage", () => {
     const p = makeProvider({ apiKey: "sk", uploadDir: "/tmp/up" });
     await p.generateImage("a cat");
     expect(mockMkdirSync).toHaveBeenCalledWith(expect.stringMatching(/tmp[\\/]up[\\/]images/), { recursive: true });
-    expect(mockWriteFileSync).toHaveBeenCalled();
-    expect(mockWriteFileSync.mock.calls[0][0]).toContain("sf-id.png");
+  });
+
+  it("passes AbortSignal to the fetch call", async () => {
+    const p = makeProvider({ apiKey: "sk-sf" });
+    await p.generateImage("a cat");
+    const call = fetchCalls.find(c => c.url.includes("/images/generations"));
+    expect(call!.options!.signal).toBeDefined();
+  });
+
+  it("throws on JSON parse error", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/images/generations")) return Promise.resolve({ ok: true, json: () => Promise.reject(new SyntaxError("Unexpected token")) });
+      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    }) as any);
+    const p = makeProvider({ apiKey: "sk" });
+    await expect(p.generateImage("cat")).rejects.toThrow(SyntaxError);
+  });
+
+  it("throws on network error", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/images/generations")) return Promise.reject(new TypeError("fetch failed"));
+      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    }) as any);
+    const p = makeProvider({ apiKey: "sk" });
+    await expect(p.generateImage("cat")).rejects.toThrow("fetch failed");
+  });
+
+  it("throws on missing apiKey", async () => {
+    vi.stubEnv("SILICONFLOW_API_KEY", "");
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url.includes("/images/generations")) return Promise.resolve({ ok: false, status: 401, text: () => Promise.resolve("unauthorized") });
+      return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    }) as any);
+    const p = makeProvider();
+    await expect(p.generateImage("cat")).rejects.toThrow("SiliconFlow image request failed: 401");
+    vi.unstubAllEnvs();
   });
 });

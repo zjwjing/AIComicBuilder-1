@@ -9,6 +9,12 @@ if (process.env.FFMPEG_BINARY_PATH) {
 
 const uploadDir = process.env.UPLOAD_DIR || "./uploads";
 
+/** Use GPU video encoder (h264_nvenc) when available, fall back to software libx264 */
+function getVideoEncoder(): string {
+  if (process.env.FFMPEG_VIDEO_ENCODER) return process.env.FFMPEG_VIDEO_ENCODER;
+  return "libx264";
+}
+
 type TransitionType = "cut" | "dissolve" | "fade_in" | "fade_out" | "wipeleft" | "slideright" | "circleopen";
 
 const DEFAULT_XFADE_DURATION = 0.5;
@@ -67,22 +73,34 @@ export async function generateTitleCard(
   const { fontSize = 48, bgColor = "black", textColor = "white" } = options || {};
   const cardPath = path.resolve(outputDir, `title-${genId()}.mp4`);
 
+  // Write text to temp file to avoid drawtext filter injection via textfile
+  const tmpDir = path.resolve(outputDir, ".tmp");
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const textFile = path.join(tmpDir, `title-text-${genId()}.txt`);
+  fs.writeFileSync(textFile, text, "utf-8");
+
   await new Promise<void>((resolve, reject) => {
     ffmpeg()
       .input(`color=c=${bgColor}:s=1920x1080:d=${duration}`)
       .inputOptions(["-f", "lavfi"])
       .outputOptions([
         "-vf",
-        `drawtext=text='${text.replace(/'/g, "'\\''")}':fontsize=${fontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=(h-text_h)/2`,
-        "-c:v", "libx264",
+        `drawtext=textfile='${textFile.replace(/'/g, "'\\''")}':fontsize=${fontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=(h-text_h)/2`,
+        "-c:v", getVideoEncoder(),
         "-preset", "fast",
         "-crf", "23",
         "-t", String(duration),
         "-pix_fmt", "yuv420p",
       ])
       .output(cardPath)
-      .on("end", () => resolve())
-      .on("error", (err) => reject(new Error(`Title card generation failed: ${err.message}`)))
+      .on("end", () => {
+        try { fs.unlinkSync(textFile); } catch {}
+        resolve();
+      })
+      .on("error", (err) => {
+        try { fs.unlinkSync(textFile); } catch {}
+        reject(new Error(`Title card generation failed: ${err.message}`));
+      })
       .run();
   });
 
@@ -246,7 +264,7 @@ async function concatWithTransitions(
       cmd
         .complexFilter(complexFilter, "vout")
         .outputOptions([
-          "-c:v", "libx264",
+          "-c:v", getVideoEncoder(),
           "-preset", "fast",
           "-crf", "23",
           "-an",
@@ -433,7 +451,7 @@ export async function assembleVideo(params: AssembleParams): Promise<AssembleRes
           .outputOptions([
             "-y",
             "-vf", `subtitles='${escapedSrtPath}'`,
-            "-c:v", "libx264",
+            "-c:v", getVideoEncoder(),
             "-preset", "fast",
             "-crf", "23",
             "-c:a", "aac",
