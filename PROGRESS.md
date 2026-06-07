@@ -560,3 +560,28 @@
 - Generate test project via API then test full storyboard flow
 - For AIComicBuilder mainline: implement HiDream-O1 ComfyUI workflow, LTX Video 4-grid
 - When ASXS quota resets: benchmark GPT-5.5 vs Mano-P on same GUI tasks
+
+## 2026-06-07 Session (续2) — ERNIE-Image ComfyUI 集成
+- 用户下载完 ERNIE-Image (M:\models\ernie-image\, 43.83 GB) 后, 集成到项目
+- 新增 WorkflowFamily: \ernie-image-comfyui\
+- 新增 ImageModelFamily: \ernie\ (modelId includes 'ernie')
+- 复用 \character_image_hidream_o1\ prompt key (layout selector + 中文 prompt 都适用)
+- 文件改动 (9):
+  - \src/lib/ai/types.ts\ — WorkflowFamily 加 'ernie-image-comfyui'
+  - \src/lib/ai/prompts/character-image.ts\ — ImageModelFamily + detect()
+  - \src/lib/comfyui/preflight.ts\ — WORKFLOW_NODE_REQUIREMENTS['ernie-image-comfyui']
+  - \src/lib/ai/providers/comfyui-image.ts\ — buildErnieImageWorkflow() + generateImage 分支
+  - \src/lib/pipeline/handlers/character.ts\ — family === 'ernie' 分支 (×2)
+  - \src/app/api/models/list/route.ts\ — comfyui image 列表加 ERNIE
+  - 3 测试文件 — +5 测试 (comfyui-image 3, detection 1, character 1)
+- ERNIE workflow 节点:
+  - UNETLoader (66): ernie-image.safetensors | ernie-image-turbo.safetensors
+  - CLIPLoader (62): ministral-3-3b.safetensors, type='flux2'
+  - VAELoader (63): flux2-vae.safetensors
+  - KSamplerSelect (16): 'euler' (base) | 'res_multistep' (turbo)
+  - KSampler (70): steps 50/8, cfg 4.0/1.0
+  - EmptyFlux2LatentImage (71), CLIPTextEncode (76/78), RandomNoise (18), VAEDecode (65), SaveImage (73)
+- 分辨率: 1024², 1376×768, 768×1376, 1200×896, 896×1200, 1264×848, 848×1264
+- 未实现: prompt enhancement 节点 (\TextGenerate\ + \ernie-image-prompt-enhancer.safetensors\), 可后续 toggle
+- 用户使用步骤: 设置页 → 选 ComfyUI provider → 模型勾选 'ERNIE-Image (ComfyUI)' → 启动 ComfyUI
+- 验证: lint ✅, tsc ✅, vitest 647/647 (+5) ✅

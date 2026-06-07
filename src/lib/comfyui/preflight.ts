@@ -129,6 +129,11 @@ export const WORKFLOW_NODE_REQUIREMENTS: Record<string, string[]> = {
     "HiDreamO1ReferenceImages", "ComfySwitchNode", "PrimitiveBoolean",
     "LoadImage",
   ],
+  "ernie-image-comfyui": [
+    "SaveImage", "UNETLoader", "VAELoader", "CLIPLoader",
+    "EmptyFlux2LatentImage", "CLIPTextEncode", "KSampler",
+    "VAEDecode", "RandomNoise", "KSamplerSelect",
+  ],
 };
 
 async function fetchJson(

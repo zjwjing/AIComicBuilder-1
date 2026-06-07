@@ -132,6 +132,7 @@ export async function POST(request: Request) {
           { id: "qwen-edit-dual", name: "Qwen Edit Dual (ComfyUI)" },
           { id: "ideogram4-comfyui", name: "Ideogram 4.0 (ComfyUI)" },
           { id: "hidream-o1-comfyui", name: "HiDream-O1 (ComfyUI)" },
+          { id: "ernie-image-comfyui", name: "ERNIE-Image (ComfyUI)" },
         ],
       });
     }

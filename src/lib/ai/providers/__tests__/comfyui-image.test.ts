@@ -713,5 +713,159 @@ describe("ComfyUIImageProvider", () => {
       vi.useRealTimers();
       expect(caught?.message).toContain("ComfyUI image generation timed out after 4 minutes");
     });
+
+    it("submits ernie-image workflow and polls for result", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      const submitResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({ prompt_id: "ernie-1" }),
+        text: vi.fn(),
+      };
+      const historyResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          "ernie-1": {
+            outputs: {
+              "73": { images: [{ filename: "ernie_output.png" }] },
+            },
+          },
+        }),
+      };
+      const viewResponse = {
+        ok: true,
+        headers: new Map([["content-type", "image/png"]]),
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(15)),
+      };
+
+      mockFetch
+        .mockResolvedValueOnce(submitResponse)
+        .mockResolvedValueOnce(historyResponse)
+        .mockResolvedValueOnce(viewResponse);
+
+      const p = new ComfyUIImageProvider({
+        baseUrl: "http://localhost:8188",
+        model: "ernie-image-comfyui",
+      });
+      const result = await p.generateImage("a futuristic city skyline");
+
+      expect(result).toContain("mock-id-123");
+      const submitCall = mockFetch.mock.calls[0];
+      expect(submitCall[0]).toBe("http://localhost:8188/prompt");
+      const submitBody = JSON.parse(submitCall[1].body);
+      expect(submitBody.prompt["66"].class_type).toBe("UNETLoader");
+      expect(submitBody.prompt["66"].inputs.unet_name).toBe("ernie-image.safetensors");
+      expect(submitBody.prompt["62"].class_type).toBe("CLIPLoader");
+      expect(submitBody.prompt["62"].inputs.clip_name).toBe("ministral-3-3b.safetensors");
+      expect(submitBody.prompt["63"].class_type).toBe("VAELoader");
+      expect(submitBody.prompt["63"].inputs.vae_name).toBe("flux2-vae.safetensors");
+      expect(submitBody.prompt["76"].inputs.text).toBe("a futuristic city skyline");
+      expect(submitBody.prompt["70"].class_type).toBe("KSampler");
+      expect(submitBody.prompt["70"].inputs.steps).toBe(50);
+      expect(submitBody.prompt["70"].inputs.cfg).toBe(4.0);
+      expect(submitBody.prompt["16"].inputs.sampler_name).toBe("euler");
+      expect(submitBody.prompt["73"].inputs.filename_prefix).toBe("ernie-image");
+    });
+
+    it("uses turbo settings when model id is ernie-image-turbo", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      const submitResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({ prompt_id: "ernie-turbo-1" }),
+        text: vi.fn(),
+      };
+      const historyResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          "ernie-turbo-1": {
+            outputs: {
+              "73": { images: [{ filename: "ernie_turbo_output.png" }] },
+            },
+          },
+        }),
+      };
+      const viewResponse = {
+        ok: true,
+        headers: new Map([["content-type", "image/png"]]),
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(10)),
+      };
+
+      mockFetch
+        .mockResolvedValueOnce(submitResponse)
+        .mockResolvedValueOnce(historyResponse)
+        .mockResolvedValueOnce(viewResponse);
+
+      const p = new ComfyUIImageProvider({
+        baseUrl: "http://localhost:8188",
+        model: "ernie-image-turbo-comfyui",
+      });
+      await p.generateImage("a fast cat");
+
+      const submitBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(submitBody.prompt["66"].inputs.unet_name).toBe("ernie-image-turbo.safetensors");
+      expect(submitBody.prompt["70"].inputs.steps).toBe(8);
+      expect(submitBody.prompt["70"].inputs.cfg).toBe(1.0);
+      expect(submitBody.prompt["16"].inputs.sampler_name).toBe("res_multistep");
+      expect(submitBody.prompt["73"].inputs.filename_prefix).toBe("ernie-image-turbo");
+    });
+
+    it("respects explicit workflowFamily=ernie-image-comfyui", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      const submitResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({ prompt_id: "ernie-explicit" }),
+        text: vi.fn(),
+      };
+      const historyResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          "ernie-explicit": {
+            outputs: { "73": { images: [{ filename: "out.png" }] } },
+          },
+        }),
+      };
+      const viewResponse = {
+        ok: true,
+        headers: new Map([["content-type", "image/png"]]),
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
+      };
+      mockFetch
+        .mockResolvedValueOnce(submitResponse)
+        .mockResolvedValueOnce(historyResponse)
+        .mockResolvedValueOnce(viewResponse);
+
+      const p = new ComfyUIImageProvider({
+        baseUrl: "http://localhost:8188",
+        model: "z-image-turbo-comfyui",
+      });
+      await p.generateImage("test", { workflowFamily: "ernie-image-comfyui" });
+
+      const submitBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(submitBody.prompt["66"].class_type).toBe("UNETLoader");
+      expect(submitBody.prompt["66"].inputs.unet_name).toBe("ernie-image.safetensors");
+    });
   });
 });

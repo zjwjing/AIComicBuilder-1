@@ -28,6 +28,12 @@ describe("detectImageModelFamily", () => {
     expect(detectImageModelFamily(undefined, "hidream_o1_xyz")).toBe("hidream");
   });
 
+  it("returns 'ernie' for ernie model", () => {
+    expect(detectImageModelFamily("comfyui", "ernie-image-comfyui")).toBe("ernie");
+    expect(detectImageModelFamily("comfyui", "ernie-image-turbo-comfyui")).toBe("ernie");
+    expect(detectImageModelFamily(undefined, "ernie-image-turbo")).toBe("ernie");
+  });
+
   it("returns 'other' for unknown models", () => {
     expect(detectImageModelFamily("comfyui", "z-image-turbo-comfyui")).toBe("other");
     expect(detectImageModelFamily("openai", "dall-e-3")).toBe("other");

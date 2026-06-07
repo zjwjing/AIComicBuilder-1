@@ -60,6 +60,30 @@ function ratioToHiDreamO1Size(ratio?: string): { width: number; height: number }
   }
 }
 
+function ratioToErnieImageSize(ratio?: string): { width: number; height: number } {
+  switch (ratio) {
+    case "16:9":
+      return { width: 1376, height: 768 };
+    case "9:16":
+      return { width: 768, height: 1376 };
+    case "4:3":
+      return { width: 1200, height: 896 };
+    case "3:4":
+      return { width: 896, height: 1200 };
+    case "3:2":
+      return { width: 1264, height: 848 };
+    case "2:3":
+      return { width: 848, height: 1264 };
+    case "1:1":
+    default:
+      return { width: 1024, height: 1024 };
+  }
+}
+
+function isErnieTurboModel(modelId: string): boolean {
+  return /ernie[-_]?image[-_]?turbo/i.test(modelId);
+}
+
 export class ComfyUIImageProvider implements AIProvider {
   private baseUrl: string;
   private model: string;
@@ -539,6 +563,84 @@ export class ComfyUIImageProvider implements AIProvider {
     return workflow;
   }
 
+  private buildErnieImageWorkflow(
+    prompt: string,
+    options?: ImageOptions,
+  ): Record<string, unknown> {
+    const size = ratioToErnieImageSize(options?.aspectRatio);
+    const seed = Math.floor(Math.random() * 2_147_483_647);
+    const isTurbo = isErnieTurboModel(this.model);
+    const steps = isTurbo ? 8 : 50;
+    const cfg = isTurbo ? 1.0 : 4.0;
+    const samplerName = isTurbo ? "res_multistep" : "euler";
+    const scheduler = isTurbo ? "simple" : "normal";
+    const diffusionFile = isTurbo
+      ? "ernie-image-turbo.safetensors"
+      : "ernie-image.safetensors";
+    const negativeText = [
+      "duplicate characters, multiple people, extra person, cloned figure, two many subjects, bad anatomy, ugly, blurry, low quality, distorted, watermark, text",
+      options?.negativePrompt,
+    ].filter(Boolean).join(", ");
+
+    return {
+      "66": {
+        class_type: "UNETLoader",
+        inputs: { unet_name: diffusionFile, weight_dtype: "default" },
+      },
+      "62": {
+        class_type: "CLIPLoader",
+        inputs: { clip_name: "ministral-3-3b.safetensors", type: "flux2", device: "default" },
+      },
+      "63": {
+        class_type: "VAELoader",
+        inputs: { vae_name: "flux2-vae.safetensors" },
+      },
+      "76": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: prompt, clip: ["62", 0] },
+      },
+      "78": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: negativeText, clip: ["62", 0] },
+      },
+      "71": {
+        class_type: "EmptyFlux2LatentImage",
+        inputs: { width: size.width, height: size.height, batch_size: 1 },
+      },
+      "18": {
+        class_type: "RandomNoise",
+        inputs: { noise_seed: seed },
+      },
+      "16": {
+        class_type: "KSamplerSelect",
+        inputs: { sampler_name: samplerName },
+      },
+      "70": {
+        class_type: "KSampler",
+        inputs: {
+          model: ["66", 0],
+          positive: ["76", 0],
+          negative: ["78", 0],
+          latent_image: ["71", 0],
+          noise: ["18", 0],
+          sampler: ["16", 0],
+          scheduler,
+          steps,
+          cfg,
+          denoise: 1,
+        },
+      },
+      "65": {
+        class_type: "VAEDecode",
+        inputs: { samples: ["70", 0], vae: ["63", 0] },
+      },
+      "73": {
+        class_type: "SaveImage",
+        inputs: { filename_prefix: isTurbo ? "ernie-image-turbo" : "ernie-image", images: ["65", 0] },
+      },
+    };
+  }
+
   private async pollForImage(promptId: string): Promise<{ filename: string; subfolder?: string; type?: string }> {
     const maxAttempts = 120;
     for (let i = 0; i < maxAttempts; i++) {
@@ -592,6 +694,7 @@ export class ComfyUIImageProvider implements AIProvider {
         if (files.some((f: string) => f.includes("ideogram4"))) return this.cacheFamily("ideogram4-comfyui");
         if (files.some((f: string) => f.includes("qwen-edit"))) return this.cacheFamily("qwen-edit-dual");
         if (files.some((f: string) => f.includes("hidream_o1"))) return this.cacheFamily("hidream-o1-comfyui");
+        if (files.some((f: string) => /ernie[-_]?image/i.test(f))) return this.cacheFamily("ernie-image-comfyui");
         if (files.some((f: string) => f.includes("z_image_turbo"))) return this.cacheFamily("z-image-turbo-comfyui");
       }
       return this.cacheFamily("z-image-turbo-comfyui");
@@ -637,10 +740,12 @@ export class ComfyUIImageProvider implements AIProvider {
       || (this.model.includes("qwen-edit") ? "qwen-edit-dual" as const : undefined)
       || (this.model.includes("ideogram4") || this.model.includes("ideogram-4") || prompt.includes('"prompt_generation"') ? "ideogram4-comfyui" as const : undefined)
       || (this.model.includes("hidream") || this.model.includes("hidream_o1") ? "hidream-o1-comfyui" as const : undefined)
+      || (this.model.includes("ernie") ? "ernie-image-comfyui" as const : undefined)
       || await this.detectWorkflowFamily();
     const isIdeogram4 = workflowFamily === "ideogram4-comfyui";
     const isQwenEdit = workflowFamily === "qwen-edit-dual";
     const isHiDreamO1 = workflowFamily === "hidream-o1-comfyui";
+    const isErnieImage = workflowFamily === "ernie-image-comfyui";
 
     if (isHiDreamO1) {
       const refs = [options?.editBaseImage, ...(options?.referenceImages ?? [])]
@@ -685,6 +790,41 @@ export class ComfyUIImageProvider implements AIProvider {
 
       const output = await this.pollForImage(promptId);
       return this.downloadAndSaveImage(output, "hidream-o1");
+    }
+
+    if (isErnieImage) {
+      const preflightResult = await preflightWorkflow(
+        this.baseUrl, workflowFamily, [], this.getAuthHeaders(),
+      );
+      if (!preflightResult.ok) {
+        console.warn(`[ComfyUIImage] Preflight failed for ${this.model}:`, preflightResult.error);
+        if (preflightResult.error?.code === ErrorCodes.SERVER_UNAVAILABLE) {
+          throw new Error(`ComfyUI server unreachable: ${preflightResult.error.message}`);
+        }
+      }
+
+      const workflow = this.buildErnieImageWorkflow(prompt, options);
+
+      const submitRes = await fetch(`${this.baseUrl}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...this.getAuthHeaders() },
+        body: JSON.stringify({ prompt: workflow }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!submitRes.ok) {
+        const errText = await submitRes.text().catch(() => "");
+        throw new Error(`ComfyUI ernie-image prompt submit failed: ${submitRes.status} ${errText}`);
+      }
+
+      const submitResult = (await submitRes.json()) as ComfyPromptResponse;
+      const promptId = submitResult.prompt_id;
+      if (!promptId) {
+        throw new Error(`ComfyUI ernie-image returned no prompt_id: ${JSON.stringify(submitResult)}`);
+      }
+
+      const output = await this.pollForImage(promptId);
+      return this.downloadAndSaveImage(output, "ernie-image");
     }
 
     const preflightResult = await preflightWorkflow(this.baseUrl, workflowFamily, [], this.getAuthHeaders());

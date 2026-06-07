@@ -6,7 +6,7 @@ export interface TextOptions {
   images?: string[];  // local file paths for vision input
 }
 
-export type WorkflowFamily = "z-image-turbo-comfyui" | "ideogram4-comfyui" | "qwen-edit-dual" | "hidream-o1-comfyui";
+export type WorkflowFamily = "z-image-turbo-comfyui" | "ideogram4-comfyui" | "qwen-edit-dual" | "hidream-o1-comfyui" | "ernie-image-comfyui";
 
 export interface ImageOptions {
   model?: string;

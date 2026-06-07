@@ -206,4 +206,33 @@ describe("handleSingleCharacterImage", () => {
     expect(mockPatchAsset).toHaveBeenCalledWith("ref-asset-1", { status: "pending", fileUrl: null });
     expect(mockPatchAsset).toHaveBeenCalledWith("ref-asset-2", { status: "pending", fileUrl: null });
   });
+
+  it("routes ernie-image-comfyui correctly to ERNIE workflow family", async () => {
+    const ernieConfig = {
+      ...BASE_MODEL_CONFIG,
+      image: { ...BASE_MODEL_CONFIG.image, protocol: "comfyui", modelId: "ernie-image-comfyui" },
+    };
+    mockSelectWhere.mockResolvedValueOnce([MOCK_CHARACTER]);
+    mockDetectFamily.mockReturnValue("ernie");
+    mockResolvePrompt.mockResolvedValue("a brave warrior in red armor");
+    mockGenerateImage.mockResolvedValue("characters/char-1-ernie.png");
+    mockSelectWhere.mockResolvedValueOnce([]);
+    mockLoadLegacy.mockResolvedValue(new Map());
+
+    const res = await handleSingleCharacterImage("proj-1", "user-1", { characterId: "char-1" }, ernieConfig);
+
+    expect(res.status).toBe(200);
+    expect(mockDetectFamily).toHaveBeenCalledWith("comfyui", "ernie-image-comfyui");
+    expect(mockResolvePrompt).toHaveBeenCalledWith(
+      "character_image_hidream_o1",
+      { userId: "user-1", projectId: "proj-1" },
+      { characterName: "英雄", description: "一位勇敢的战士，穿着红色铠甲", referenceLayout: "four-view" }
+    );
+    expect(mockGenerateImage).toHaveBeenCalledWith(
+      "a brave warrior in red armor",
+      expect.objectContaining({
+        workflowFamily: "ernie-image-comfyui",
+      })
+    );
+  });
 });

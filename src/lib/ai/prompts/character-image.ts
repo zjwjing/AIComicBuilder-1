@@ -54,7 +54,7 @@ ${characterName ? `Display the character's name "${characterName}" as a clean ty
 Professional character design reference sheet. This is the single canonical reference — all future generated frames MUST reproduce this exact character in this exact medium and style. Zero medium drift, zero style drift, zero AI artifacts.`;
 }
 
-export type ImageModelFamily = "gpt" | "agnes" | "sensenova" | "ideogram4" | "hidream" | "other";
+export type ImageModelFamily = "gpt" | "agnes" | "sensenova" | "ideogram4" | "hidream" | "ernie" | "other";
 
 export function detectImageModelFamily(protocol?: string, modelId?: string): ImageModelFamily {
   if (modelId?.includes("gpt-image")) return "gpt";
@@ -62,6 +62,7 @@ export function detectImageModelFamily(protocol?: string, modelId?: string): Ima
   if (protocol === "sensenova" || modelId?.includes("sensenova")) return "sensenova";
   if (protocol === "ideogram4" || modelId?.includes("ideogram4") || modelId?.includes("ideogram-4")) return "ideogram4";
   if (modelId?.includes("hidream")) return "hidream";
+  if (modelId?.includes("ernie")) return "ernie";
   return "other";
 }
 

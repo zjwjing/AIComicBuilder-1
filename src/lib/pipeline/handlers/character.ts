@@ -291,6 +291,7 @@ export async function handleSingleCharacterImage(
   if (family === "gpt") promptKey = "character_image";
   else if (family === "ideogram4") promptKey = "character_image_ideogram4";
   else if (family === "hidream") promptKey = "character_image_hidream_o1";
+  else if (family === "ernie") promptKey = "character_image_hidream_o1";
   else promptKey = "character_image_simple";
   const prompt = await resolvePrompt(promptKey, { userId: _userId, projectId: _projectId }, {
     characterName: character.name,
@@ -319,7 +320,7 @@ export async function handleSingleCharacterImage(
       aspectRatio: DEFAULT_ASPECT_RATIO,
       quality: DEFAULT_IMAGE_QUALITY,
       ...(subjectRefs.length > 0 && { referenceImages: subjectRefs }),
-      workflowFamily: family === "ideogram4" ? "ideogram4-comfyui" : family === "hidream" ? "hidream-o1-comfyui" : undefined,
+      workflowFamily: family === "ideogram4" ? "ideogram4-comfyui" : family === "hidream" ? "hidream-o1-comfyui" : family === "ernie" ? "ernie-image-comfyui" : undefined,
     });
 
     // Append to history
@@ -434,6 +435,7 @@ export async function handleBatchCharacterImage(
   if (family === "gpt") promptKey = "character_image";
   else if (family === "ideogram4") promptKey = "character_image_ideogram4";
   else if (family === "hidream") promptKey = "character_image_hidream_o1";
+  else if (family === "ernie") promptKey = "character_image_hidream_o1";
   else promptKey = "character_image_simple";
 
   const results: Array<{ characterId: string; name: string; imagePath?: string; referenceLayout?: string; singlePortraitPath?: string | null; status: string; error?: string }> = [];
@@ -478,7 +480,7 @@ export async function handleBatchCharacterImage(
         aspectRatio: "16:9",
         quality: DEFAULT_IMAGE_QUALITY,
         ...(subjectRefs.length > 0 && { referenceImages: subjectRefs }),
-        workflowFamily: family === "ideogram4" ? "ideogram4-comfyui" : family === "hidream" ? "hidream-o1-comfyui" : undefined,
+        workflowFamily: family === "ideogram4" ? "ideogram4-comfyui" : family === "hidream" ? "hidream-o1-comfyui" : family === "ernie" ? "ernie-image-comfyui" : undefined,
       });
 
       // Append to history
