@@ -1,4 +1,4 @@
-import type { AIProvider, TextOptions, ImageOptions } from "../types";
+import type { AIProvider, TextOptions, ImageOptions, WorkflowFamily } from "../types";
 import fs, { createWriteStream } from "node:fs";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -13,6 +13,11 @@ type ComfyPromptResponse = {
 
 type ComfyHistoryRecord = {
   outputs?: Record<string, { images?: Array<{ filename: string; subfolder?: string; type?: string }> }>;
+  status?: {
+    status_str?: string;
+    completed?: boolean;
+    messages?: Array<[string, { message?: string }]>;
+  };
 };
 
 type UploadedImageInfo = {
@@ -35,12 +40,33 @@ function ratioToImageSize(ratio?: string): { width: number; height: number } {
   }
 }
 
+function ratioToHiDreamO1Size(ratio?: string): { width: number; height: number } {
+  switch (ratio) {
+    case "16:9":
+      return { width: 2560, height: 1440 };
+    case "9:16":
+      return { width: 1440, height: 2560 };
+    case "4:3":
+      return { width: 2304, height: 1728 };
+    case "3:4":
+      return { width: 1728, height: 2304 };
+    case "3:2":
+      return { width: 2496, height: 1664 };
+    case "2:3":
+      return { width: 1664, height: 2496 };
+    case "1:1":
+    default:
+      return { width: 2048, height: 2048 };
+  }
+}
+
 export class ComfyUIImageProvider implements AIProvider {
   private baseUrl: string;
   private model: string;
   private uploadDir: string;
   private authToken?: string;
   private authCookie?: string;
+  private _workflowFamilyCache?: WorkflowFamily;
 
   constructor(params?: { baseUrl?: string; model?: string; uploadDir?: string; authToken?: string; authCookie?: string }) {
     this.baseUrl = (params?.baseUrl || process.env.COMFYUI_BASE_URL || "https://2wdf3izjfh-8188.cnb.run/").replace(/\/+$/, "");
@@ -236,6 +262,7 @@ export class ComfyUIImageProvider implements AIProvider {
 
   private buildWorkflow(prompt: string, options?: ImageOptions): Record<string, unknown> {
     const size = ratioToImageSize(options?.aspectRatio);
+    const negativePrompt = options?.negativePrompt?.trim();
 
     return {
       "9": {
@@ -259,7 +286,7 @@ export class ComfyUIImageProvider implements AIProvider {
       },
       "57:28": {
         inputs: {
-          unet_name: "z_image_turbo_bf16.safetensors",
+          unet_name: "ZImage\\z_image_turbo_bf16.safetensors",
           weight_dtype: "default",
         },
         class_type: "UNETLoader",
@@ -287,10 +314,10 @@ export class ComfyUIImageProvider implements AIProvider {
         class_type: "ModelSamplingAuraFlow",
       },
       "57:33": {
-        inputs: {
-          conditioning: ["57:27", 0],
-        },
-        class_type: "ConditioningZeroOut",
+        inputs: negativePrompt
+          ? { text: negativePrompt, clip: ["57:30", 0] }
+          : { conditioning: ["57:27", 0] },
+        class_type: negativePrompt ? "CLIPTextEncode" : "ConditioningZeroOut",
       },
       "57:3": {
         inputs: {
@@ -317,6 +344,201 @@ export class ComfyUIImageProvider implements AIProvider {
     };
   }
 
+  private buildIdeogram4Workflow(prompt: string, options?: ImageOptions): Record<string, unknown> {
+    const size = ratioToImageSize(options?.aspectRatio);
+    const seed = Math.floor(Math.random() * 2_147_483_647);
+    const steps = options?.quality === "hd" ? 28 : options?.quality === "default" ? 20 : 16;
+
+    const mu = options?.quality === "quality" ? 0 : options?.quality === "default" ? 0 : 0;
+    const std = options?.quality === "quality" ? 1.5 : 1.5;
+
+    return {
+      "14": {
+        class_type: "CLIPLoader",
+        inputs: { clip_name: "qwen3vl_8b_fp8_scaled.safetensors", type: "ideogram4", device: "default" },
+      },
+      "9": {
+        class_type: "VAELoader",
+        inputs: { vae_name: "flux2-vae.safetensors" },
+      },
+      "23": {
+        class_type: "UNETLoader",
+        inputs: { unet_name: "ideogram4_nvfp4_mixed.safetensors", weight_dtype: "default" },
+      },
+      "154": {
+        class_type: "UNETLoader",
+        inputs: { unet_name: "ideogram4_unconditional_nvfp4_mixed.safetensors", weight_dtype: "default" },
+      },
+      "24": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: prompt, clip: ["14", 0] },
+      },
+      "10": {
+        class_type: "ConditioningZeroOut",
+        inputs: { conditioning: ["24", 0] },
+      },
+      "11": {
+        class_type: "EmptyFlux2LatentImage",
+        inputs: { width: size.width, height: size.height, batch_size: 1 },
+      },
+      "18": {
+        class_type: "RandomNoise",
+        inputs: { noise_seed: seed },
+      },
+      "16": {
+        class_type: "KSamplerSelect",
+        inputs: { sampler_name: "euler" },
+      },
+      "17": {
+        class_type: "Ideogram4Scheduler",
+        inputs: { steps, width: size.width, height: size.height, mu, std },
+      },
+      "157": {
+        class_type: "CFGOverride",
+        inputs: { model: ["23", 0], cfg: 3, start_percent: 0.9, end_percent: 1.0 },
+      },
+      "155": {
+        class_type: "DualModelGuider",
+        inputs: { model: ["157", 0], positive: ["24", 0], model_negative: ["154", 0], negative: ["10", 0], cfg: 7 },
+      },
+      "12": {
+        class_type: "SamplerCustomAdvanced",
+        inputs: { noise: ["18", 0], guider: ["155", 0], sampler: ["16", 0], sigmas: ["17", 0], latent_image: ["11", 0] },
+      },
+      "13": {
+        class_type: "VAEDecode",
+        inputs: { samples: ["12", 0], vae: ["9", 0] },
+      },
+      "15": {
+        class_type: "SaveImage",
+        inputs: { filename_prefix: "Ideogram_4.0", images: ["13", 0] },
+      },
+    };
+  }
+
+  private buildHiDreamO1Workflow(
+    prompt: string,
+    options?: ImageOptions,
+    uploadedReferences?: UploadedImageInfo[],
+  ): Record<string, unknown> {
+    const size = ratioToHiDreamO1Size(options?.aspectRatio);
+    const seed = Math.floor(Math.random() * 2_147_483_647);
+    const steps = options?.quality === "hd" || options?.quality === "default" || !options?.quality ? 28 : 20;
+    const hasReferences = !!uploadedReferences?.length;
+    const negativeText = [
+      "duplicate characters, multiple people, extra person, cloned figure, two many subjects, bad anatomy, ugly, blurry, low quality, distorted, watermark, text",
+      options?.negativePrompt,
+    ].filter(Boolean).join(", ");
+
+    const workflow: Record<string, unknown> = {
+      "6": {
+        class_type: "CheckpointLoaderSimple",
+        inputs: { ckpt_name: "hidream_o1_image_dev_mxfp8.safetensors" },
+      },
+      "124": {
+        class_type: "ModelNoiseScale",
+        inputs: { noise_scale: 7.6, model: ["6", 0] },
+      },
+      "112": {
+        class_type: "BasicScheduler",
+        inputs: { scheduler: "normal", steps, denoise: 1, model: ["124", 0] },
+      },
+      "125": {
+        class_type: "SamplerLCM",
+        inputs: { s_noise: 1, s_noise_end: 1, noise_clip_std: 2.5 },
+      },
+      "110": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: prompt, clip: ["6", 1] },
+      },
+      "188": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: negativeText, clip: ["6", 1] },
+      },
+      "156": {
+        class_type: "EmptyHiDreamO1LatentImage",
+        inputs: { width: size.width, height: size.height, batch_size: 1 },
+      },
+      "105": {
+        class_type: "VAEDecode",
+        inputs: { samples: ["108", 0], vae: ["6", 2] },
+      },
+      "227": {
+        class_type: "SaveImage",
+        inputs: { filename_prefix: "hidream_o1", images: ["105", 0] },
+      },
+    };
+
+    if (hasReferences) {
+      const loadImages: Record<string, unknown> = {};
+      const refInputs: Record<string, unknown> = {
+        positive: ["110", 0],
+        negative: ["188", 0],
+      };
+      for (let i = 0; i < uploadedReferences!.length; i++) {
+        const loadId = `${300 + i}`;
+        loadImages[loadId] = {
+          class_type: "LoadImage",
+          inputs: { image: uploadedReferences![i].name },
+        };
+        refInputs[`images.image_${i + 1}`] = [loadId, 0];
+      }
+
+      workflow["154"] = {
+        class_type: "PrimitiveBoolean",
+        inputs: { value: true },
+      };
+      workflow["104"] = {
+        class_type: "HiDreamO1ReferenceImages",
+        inputs: refInputs,
+      };
+      workflow["152"] = {
+        class_type: "ComfySwitchNode",
+        inputs: {
+          switch: ["154", 0],
+          on_false: ["110", 0],
+          on_true: ["104", 0],
+        },
+      };
+      workflow["153"] = {
+        class_type: "ComfySwitchNode",
+        inputs: {
+          switch: ["154", 0],
+          on_false: ["188", 0],
+          on_true: ["104", 1],
+        },
+      };
+      workflow["108"] = {
+        class_type: "SamplerCustom",
+        inputs: {
+          add_noise: true, noise_seed: seed, cfg: 1,
+          model: ["124", 0],
+          positive: ["152", 0],
+          negative: ["153", 0],
+          sampler: ["125", 0],
+          sigmas: ["112", 0],
+          latent_image: ["156", 0],
+        },
+      };
+      Object.assign(workflow, loadImages);
+    } else {
+      workflow["108"] = {
+        class_type: "SamplerCustom",
+        inputs: {
+          add_noise: true, noise_seed: seed, cfg: 1,
+          model: ["124", 0],
+          positive: ["110", 0],
+          negative: ["188", 0],
+          sampler: ["125", 0],
+          sigmas: ["112", 0],
+          latent_image: ["156", 0],
+        },
+      };
+    }
+
+    return workflow;
+  }
+
   private async pollForImage(promptId: string): Promise<{ filename: string; subfolder?: string; type?: string }> {
     const maxAttempts = 120;
     for (let i = 0; i < maxAttempts; i++) {
@@ -329,6 +551,14 @@ export class ComfyUIImageProvider implements AIProvider {
 
       const json = (await res.json()) as Record<string, ComfyHistoryRecord>;
       const record = json[promptId];
+      const statusMessages = record?.status?.messages;
+      if (Array.isArray(statusMessages)) {
+        for (const msg of statusMessages) {
+          if (Array.isArray(msg) && msg[1]?.message?.includes("safety")) {
+            throw new Error(`ComfyUI image blocked by safety filter: ${msg[1].message}`);
+          }
+        }
+      }
       const outputs = record?.outputs || {};
       for (const node of Object.values(outputs)) {
         const image = node.images?.[0];
@@ -339,8 +569,124 @@ export class ComfyUIImageProvider implements AIProvider {
     throw new Error("ComfyUI image generation timed out after 4 minutes");
   }
 
+  private async detectWorkflowFamily(): Promise<WorkflowFamily> {
+    if (this._workflowFamilyCache) return this._workflowFamilyCache;
+    if (this.baseUrl.includes("localhost") || this.baseUrl.includes("127.0.0.1")) {
+      return "z-image-turbo-comfyui";
+    }
+    try {
+      const res = await fetch(`${this.baseUrl}/models`, {
+        headers: this.getAuthHeaders(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return this.cacheFamily("z-image-turbo-comfyui");
+      const folders = await res.json() as string[];
+      for (const folder of folders) {
+        if (!folder.includes("diffusion_models") && !folder.includes("checkpoints")) continue;
+        const filesRes = await fetch(`${this.baseUrl}/models/${encodeURIComponent(folder)}`, {
+          headers: this.getAuthHeaders(),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!filesRes.ok) break;
+        const files = await filesRes.json() as string[];
+        if (files.some((f: string) => f.includes("ideogram4"))) return this.cacheFamily("ideogram4-comfyui");
+        if (files.some((f: string) => f.includes("qwen-edit"))) return this.cacheFamily("qwen-edit-dual");
+        if (files.some((f: string) => f.includes("hidream_o1"))) return this.cacheFamily("hidream-o1-comfyui");
+        if (files.some((f: string) => f.includes("z_image_turbo"))) return this.cacheFamily("z-image-turbo-comfyui");
+      }
+      return this.cacheFamily("z-image-turbo-comfyui");
+    } catch {
+      return this.cacheFamily("z-image-turbo-comfyui");
+    }
+  }
+
+  private cacheFamily(family: WorkflowFamily): WorkflowFamily {
+    this._workflowFamilyCache = family;
+    return family;
+  }
+
+  private async downloadAndSaveImage(output: { filename: string; subfolder?: string; type?: string }, label: string): Promise<string> {
+    if (output.filename.includes("safety") || output.filename.includes("blocked") || output.filename.includes("nsfw")) {
+      throw new Error(`ComfyUI ${label} output blocked by safety filter: ${output.filename}`);
+    }
+    const query = new URLSearchParams({
+      filename: output.filename,
+      subfolder: output.subfolder || "",
+      type: output.type || "output",
+    });
+    const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
+      headers: this.getAuthHeaders(),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!imageRes.ok) {
+      throw new Error(`ComfyUI ${label} download failed: ${imageRes.status}`);
+    }
+
+    const contentType = imageRes.headers.get("content-type") || "image/png";
+    const ext = contentType.includes("jpeg") ? "jpg" : "png";
+    const filename = `${genId()}.${ext}`;
+    const dir = path.join(this.uploadDir, "frames");
+    fs.mkdirSync(dir, { recursive: true });
+    const filepath = path.join(dir, filename);
+    await pipeline(imageRes.body! as any, createWriteStream(filepath));
+    return filepath;
+  }
+
   async generateImage(prompt: string, options?: ImageOptions): Promise<string> {
-    const workflowFamily = this.model.includes("qwen-edit") ? "qwen-edit-dual" : "z-image-turbo-comfyui";
+    const workflowFamily = options?.workflowFamily
+      || (this.model.includes("qwen-edit") ? "qwen-edit-dual" as const : undefined)
+      || (this.model.includes("ideogram4") || this.model.includes("ideogram-4") || prompt.includes('"prompt_generation"') ? "ideogram4-comfyui" as const : undefined)
+      || (this.model.includes("hidream") || this.model.includes("hidream_o1") ? "hidream-o1-comfyui" as const : undefined)
+      || await this.detectWorkflowFamily();
+    const isIdeogram4 = workflowFamily === "ideogram4-comfyui";
+    const isQwenEdit = workflowFamily === "qwen-edit-dual";
+    const isHiDreamO1 = workflowFamily === "hidream-o1-comfyui";
+
+    if (isHiDreamO1) {
+      const refs = [options?.editBaseImage, ...(options?.referenceImages ?? [])]
+        .filter((img): img is string => !!img)
+        .filter((img, index, arr) => arr.indexOf(img) === index)
+        .slice(0, 10);
+      const extraNodes = refs.length > 0
+        ? ["HiDreamO1ReferenceImages", "ComfySwitchNode", "PrimitiveBoolean", "LoadImage"]
+        : undefined;
+      const preflightResult = await preflightWorkflow(
+        this.baseUrl, workflowFamily, [], this.getAuthHeaders(), extraNodes,
+      );
+      if (!preflightResult.ok) {
+        console.warn(`[ComfyUIImage] Preflight failed for ${this.model}:`, preflightResult.error);
+        if (preflightResult.error?.code === ErrorCodes.SERVER_UNAVAILABLE) {
+          throw new Error(`ComfyUI server unreachable: ${preflightResult.error.message}`);
+        }
+      }
+
+      const uploadedRefs = refs.length > 0
+        ? await Promise.all(refs.map((img) => this.uploadImage(img)))
+        : [];
+      const workflow = this.buildHiDreamO1Workflow(prompt, options, uploadedRefs);
+
+      const submitRes = await fetch(`${this.baseUrl}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...this.getAuthHeaders() },
+        body: JSON.stringify({ prompt: workflow }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!submitRes.ok) {
+        const errText = await submitRes.text().catch(() => "");
+        throw new Error(`ComfyUI hidream-o1 prompt submit failed: ${submitRes.status} ${errText}`);
+      }
+
+      const submitResult = (await submitRes.json()) as ComfyPromptResponse;
+      const promptId = submitResult.prompt_id;
+      if (!promptId) {
+        throw new Error(`ComfyUI hidream-o1 returned no prompt_id: ${JSON.stringify(submitResult)}`);
+      }
+
+      const output = await this.pollForImage(promptId);
+      return this.downloadAndSaveImage(output, "hidream-o1");
+    }
+
     const preflightResult = await preflightWorkflow(this.baseUrl, workflowFamily, [], this.getAuthHeaders());
     if (!preflightResult.ok) {
       console.warn(`[ComfyUIImage] Preflight failed for ${this.model}:`, preflightResult.error);
@@ -349,7 +695,55 @@ export class ComfyUIImageProvider implements AIProvider {
       }
     }
 
-    if (this.model.includes("qwen-edit")) {
+    if (isIdeogram4) {
+      if (/[\u4e00-\u9fff]/.test(prompt)) {
+        const panelMatch = prompt.match(/PANEL (\d+)/);
+        const panelPos = panelMatch ? Number(panelMatch[1]) : 0;
+        const panelLabels = ["", "Opening", "Development", "Turning Point", "Conclusion"];
+        const panelLabel = panelLabels[panelPos] || "Storyboard";
+
+        const chars = (prompt.match(/[a-zA-Z0-9_.,!?;:'"()\[\]{}\s-]+/g) || []).join(" ").trim();
+        const desc = chars.slice(0, 600) || `${panelLabel} panel of a cinematic scene with characters`;
+
+        prompt = JSON.stringify({
+          high_level_description: `${panelLabel} panel of a 4-panel comic storyboard. ${desc}`,
+          style_description: {
+            aesthetics: "High quality 2D digital animation, cel shaded, clean line art, soft global illumination, volumetric lighting, vibrant colors, rich detail",
+            lighting: "Cinematic lighting with motivated key light, rim light separation, soft ambient fill",
+            medium: "Digital 2D animation production frame, professional storyboard panel",
+            color_palette: ["#3A3F5C", "#6B7B8D", "#D4A574", "#2C3E50"],
+          },
+          compositional_deconstruction: {
+            background: "Fully rendered detailed environment matching the scene setting",
+            elements: [{ type: "obj", bbox: [0, 0, 1000, 1000], desc: desc.slice(0, 500) }],
+          },
+        }, null, 2);
+      }
+      const workflow = this.buildIdeogram4Workflow(prompt, options);
+
+      const submitRes = await fetch(`${this.baseUrl}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...this.getAuthHeaders() },
+        body: JSON.stringify({ prompt: workflow }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!submitRes.ok) {
+        const errText = await submitRes.text().catch(() => "");
+        throw new Error(`ComfyUI ideogram4 prompt submit failed: ${submitRes.status} ${errText}`);
+      }
+
+      const submitResult = (await submitRes.json()) as ComfyPromptResponse;
+      const promptId = submitResult.prompt_id;
+      if (!promptId) {
+        throw new Error(`ComfyUI ideogram4 returned no prompt_id: ${JSON.stringify(submitResult)}`);
+      }
+
+      const output = await this.pollForImage(promptId);
+      return this.downloadAndSaveImage(output, "ideogram4");
+    }
+
+    if (isQwenEdit) {
       const baseImage = options?.editBaseImage || options?.referenceImages?.[0];
       if (!baseImage) {
         throw new Error("ComfyUI qwen-edit requires an editBaseImage or at least one reference image");
@@ -379,27 +773,7 @@ export class ComfyUIImageProvider implements AIProvider {
       }
 
       const output = await this.pollForImage(promptId);
-      const query = new URLSearchParams({
-        filename: output.filename,
-        subfolder: output.subfolder || "",
-        type: output.type || "output",
-      });
-      const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
-        headers: this.getAuthHeaders(),
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (!imageRes.ok) {
-        throw new Error(`ComfyUI qwen-edit download failed: ${imageRes.status}`);
-      }
-
-      const contentType = imageRes.headers.get("content-type") || "image/png";
-      const ext = contentType.includes("jpeg") ? "jpg" : "png";
-      const filename = `${genId()}.${ext}`;
-      const dir = path.join(this.uploadDir, "frames");
-      fs.mkdirSync(dir, { recursive: true });
-      const filepath = path.join(dir, filename);
-      await pipeline(imageRes.body! as any, createWriteStream(filepath));
-      return filepath;
+      return this.downloadAndSaveImage(output, "qwen-edit");
     }
 
     const workflow = this.buildWorkflow(prompt, options);
@@ -423,27 +797,6 @@ export class ComfyUIImageProvider implements AIProvider {
     }
 
     const output = await this.pollForImage(promptId);
-    const query = new URLSearchParams({
-      filename: output.filename,
-      subfolder: output.subfolder || "",
-      type: output.type || "output",
-    });
-    const imageRes = await fetch(`${this.baseUrl}/view?${query.toString()}`, {
-      headers: this.getAuthHeaders(),
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!imageRes.ok) {
-      throw new Error(`ComfyUI image download failed: ${imageRes.status}`);
-    }
-
-    const contentType = imageRes.headers.get("content-type") || "image/png";
-    const ext = contentType.includes("jpeg") ? "jpg" : "png";
-    const filename = `${genId()}.${ext}`;
-    const dir = path.join(this.uploadDir, "frames");
-    fs.mkdirSync(dir, { recursive: true });
-    const filepath = path.join(dir, filename);
-    await pipeline(imageRes.body! as any, createWriteStream(filepath));
-
-    return filepath;
+    return this.downloadAndSaveImage(output, "image");
   }
 }

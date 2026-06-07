@@ -206,6 +206,138 @@ describe("ComfyUIImageProvider", () => {
     });
   });
 
+  describe("buildHiDreamO1Workflow", () => {
+    it("returns correct structure for default workflow (no references)", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("a majestic dragon", { aspectRatio: "16:9" });
+      expect(wf["6"].class_type).toBe("CheckpointLoaderSimple");
+      expect(wf["6"].inputs.ckpt_name).toBe("hidream_o1_image_dev_mxfp8.safetensors");
+      expect(wf["124"].class_type).toBe("ModelNoiseScale");
+      expect(wf["124"].inputs.noise_scale).toBe(7.6);
+      expect(wf["112"].class_type).toBe("BasicScheduler");
+      expect(wf["125"].class_type).toBe("SamplerLCM");
+      expect(wf["125"].inputs.s_noise).toBe(1);
+      expect(wf["125"].inputs.s_noise_end).toBe(1);
+      expect(wf["125"].inputs.noise_clip_std).toBe(2.5);
+      expect(wf["110"].class_type).toBe("CLIPTextEncode");
+      expect(wf["110"].inputs.text).toBe("a majestic dragon");
+      expect(wf["188"].class_type).toBe("CLIPTextEncode");
+      expect(wf["188"].inputs.text).toContain("duplicate characters");
+      expect(wf["156"].class_type).toBe("EmptyHiDreamO1LatentImage");
+      expect(wf["105"].class_type).toBe("VAEDecode");
+      expect(wf["227"].class_type).toBe("SaveImage");
+      expect(wf["108"].class_type).toBe("SamplerCustom");
+      expect(wf["108"].inputs.cfg).toBe(1);
+      expect(wf["108"].inputs.sampler).toEqual(["125", 0]);
+      expect(wf["108"].inputs.positive).toEqual(["110", 0]);
+      expect(wf["108"].inputs.negative).toEqual(["188", 0]);
+      expect(wf["232"]).toBeUndefined();
+      expect(wf["230"]).toBeUndefined();
+      expect(wf["154"]).toBeUndefined();
+      expect(wf["104"]).toBeUndefined();
+      expect(wf["152"]).toBeUndefined();
+      expect(wf["153"]).toBeUndefined();
+    });
+
+    it("includes reference nodes when references provided", () => {
+      const p = new ComfyUIImageProvider();
+      const refs = [{ name: "char.png" }, { name: "style.png" }];
+      const wf = (p as any).buildHiDreamO1Workflow("a character", {}, refs);
+      expect(wf["154"].class_type).toBe("PrimitiveBoolean");
+      expect(wf["154"].inputs.value).toBe(true);
+      expect(wf["104"].class_type).toBe("HiDreamO1ReferenceImages");
+      expect(wf["104"].inputs.positive).toEqual(["110", 0]);
+      expect(wf["104"].inputs.negative).toEqual(["188", 0]);
+      expect(wf["104"].inputs["images.image_1"]).toEqual(["300", 0]);
+      expect(wf["104"].inputs["images.image_2"]).toEqual(["301", 0]);
+      expect(wf["152"].class_type).toBe("ComfySwitchNode");
+      expect(wf["152"].inputs.on_false).toEqual(["110", 0]);
+      expect(wf["152"].inputs.on_true).toEqual(["104", 0]);
+      expect(wf["153"].class_type).toBe("ComfySwitchNode");
+      expect(wf["153"].inputs.on_false).toEqual(["188", 0]);
+      expect(wf["153"].inputs.on_true).toEqual(["104", 1]);
+      expect(wf["300"].class_type).toBe("LoadImage");
+      expect(wf["300"].inputs.image).toBe("char.png");
+      expect(wf["301"].class_type).toBe("LoadImage");
+      expect(wf["301"].inputs.image).toBe("style.png");
+      expect(wf["108"].inputs.positive).toEqual(["152", 0]);
+      expect(wf["108"].inputs.negative).toEqual(["153", 0]);
+    });
+
+    it("maps 16:9 aspect ratio to 2560x1440", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { aspectRatio: "16:9" });
+      expect(wf["156"].inputs.width).toBe(2560);
+      expect(wf["156"].inputs.height).toBe(1440);
+    });
+
+    it("maps 9:16 aspect ratio to 1440x2560", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { aspectRatio: "9:16" });
+      expect(wf["156"].inputs.width).toBe(1440);
+      expect(wf["156"].inputs.height).toBe(2560);
+    });
+
+    it("maps 1:1 aspect ratio to 2048x2048", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { aspectRatio: "1:1" });
+      expect(wf["156"].inputs.width).toBe(2048);
+      expect(wf["156"].inputs.height).toBe(2048);
+    });
+
+    it("maps 4:3 aspect ratio to 2304x1728", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { aspectRatio: "4:3" });
+      expect(wf["156"].inputs.width).toBe(2304);
+      expect(wf["156"].inputs.height).toBe(1728);
+    });
+
+    it("maps 3:2 aspect ratio to 2496x1664", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { aspectRatio: "3:2" });
+      expect(wf["156"].inputs.width).toBe(2496);
+      expect(wf["156"].inputs.height).toBe(1664);
+    });
+
+    it("maps 2:3 aspect ratio to 1664x2496", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { aspectRatio: "2:3" });
+      expect(wf["156"].inputs.width).toBe(1664);
+      expect(wf["156"].inputs.height).toBe(2496);
+    });
+
+    it("uses 28 steps when quality is 'default'", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { quality: "default" });
+      expect(wf["112"].inputs.steps).toBe(28);
+    });
+
+    it("uses 28 steps when quality is 'hd'", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { quality: "hd" as any });
+      expect(wf["112"].inputs.steps).toBe(28);
+    });
+
+    it("uses 20 steps when quality is not 'default'", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", { quality: "quality" });
+      expect(wf["112"].inputs.steps).toBe(20);
+    });
+
+    it("uses 28 steps when quality is undefined", () => {
+      const p = new ComfyUIImageProvider();
+      const wf = (p as any).buildHiDreamO1Workflow("test", {});
+      expect(wf["112"].inputs.steps).toBe(28);
+    });
+
+    it("generates different seeds for different calls", () => {
+      const p = new ComfyUIImageProvider();
+      const wf1 = (p as any).buildHiDreamO1Workflow("test");
+      const wf2 = (p as any).buildHiDreamO1Workflow("test");
+      expect(wf1["108"].inputs.noise_seed).not.toBe(wf2["108"].inputs.noise_seed);
+    });
+  });
+
   describe("generateImage", () => {
     it("throws when server is unreachable", async () => {
       vi.mocked(preflightWorkflow).mockResolvedValue({
@@ -377,6 +509,56 @@ describe("ComfyUIImageProvider", () => {
       const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188" });
       const result = await p.generateImage("a cat");
       expect(result).toContain(".jpg");
+    });
+
+    it("submits hidream-o1 workflow and polls for result", async () => {
+      vi.mocked(preflightWorkflow).mockResolvedValue({
+        ok: true,
+        serverReachable: true,
+        missingNodeTypes: [],
+        missingModels: [],
+        warnings: [],
+        error: null,
+      });
+
+      const submitResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({ prompt_id: "hidream-789" }),
+        text: vi.fn(),
+      };
+      const historyResponse = {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          "hidream-789": {
+            outputs: {
+              "227": { images: [{ filename: "hidream_output.png" }] },
+            },
+          },
+        }),
+      };
+      const viewResponse = {
+        ok: true,
+        headers: new Map([["content-type", "image/png"]]),
+        arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(15)),
+      };
+
+      mockFetch
+        .mockResolvedValueOnce(submitResponse)
+        .mockResolvedValueOnce(historyResponse)
+        .mockResolvedValueOnce(viewResponse);
+
+      const p = new ComfyUIImageProvider({
+        baseUrl: "http://localhost:8188",
+        model: "hidream-o1-comfyui",
+      });
+      const result = await p.generateImage("a majestic dragon");
+
+      expect(result).toContain("mock-id-123");
+      const submitCall = mockFetch.mock.calls[0];
+      expect(submitCall[0]).toBe("http://localhost:8188/prompt");
+      const submitBody = JSON.parse(submitCall[1].body);
+      expect(submitBody.prompt["6"].class_type).toBe("CheckpointLoaderSimple");
+      expect(submitBody.prompt["110"].inputs.text).toBe("a majestic dragon");
     });
 
     it("passes auth headers with requests", async () => {
