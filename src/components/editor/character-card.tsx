@@ -8,12 +8,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslations } from "next-intl";
 import { uploadUrl } from "@/lib/utils/upload-url";
 import { useModelStore, type ModelRef } from "@/stores/model-store";
-import { Sparkles, Loader2, Copy, Check, ArrowUpCircle, Trash2, ChevronLeft, ChevronRight, Upload } from "lucide-react";
+import { Sparkles, Loader2, Copy, Check, ArrowUpCircle, Trash2, ChevronLeft, ChevronRight, Upload, ChevronDown } from "lucide-react";
 import { InlineModelPicker } from "@/components/editor/model-selector";
 import { apiFetch } from "@/lib/api-fetch";
 import { useModelGuard } from "@/hooks/use-model-guard";
 import { toast } from "sonner";
 import { buildCharacterTurnaroundPrompt } from "@/lib/ai/prompts/character-image";
+
+type ReferenceLayout = "single" | "three-view" | "four-view";
+
+const LAYOUT_OPTIONS: Array<{ value: ReferenceLayout; label: string; hint: string }> = [
+  { value: "single", label: "单图", hint: "单角色全身立绘" },
+  { value: "three-view", label: "三视图", hint: "正面/侧面/背面" },
+  { value: "four-view", label: "四视图", hint: "正面/3-4/侧面/背面" },
+];
 
 interface CharacterCardProps {
   id: string;
@@ -64,12 +72,24 @@ export function CharacterCard({
   const [lightbox, setLightbox] = useState(false);
   const [copied, setCopied] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [layoutMenu, setLayoutMenu] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const imageGuard = useModelGuard("image");
   const isGenerating = generating || (!!batchGenerating && !referenceImage);
   const [generationKey, setGenerationKey] = useState(0);
   const [localImage, setLocalImage] = useState<string | null>(null);
   const displayImage = localImage ?? referenceImage;
+
+  useEffect(() => {
+    if (!layoutMenu) return;
+    function onDocClick(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest("[data-layout-menu]")) return;
+      setLayoutMenu(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [layoutMenu]);
 
   function resolveImageRef(ref: ModelRef | null) {
     if (!ref) return null;
@@ -93,16 +113,17 @@ export function CharacterCard({
     onUpdate();
   }
 
-  async function handleGenerateImage() {
+  async function handleGenerateImage(layout: ReferenceLayout = "four-view") {
     if (!imageGuard()) return;
     setGenerating(true);
+    setLayoutMenu(false);
     try {
       const response = await apiFetch(`/api/projects/${projectId}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "single_character_image",
-          payload: { characterId: id },
+          payload: { characterId: id, referenceLayout: layout },
           modelConfig: { ...getModelConfig(), image: resolveImageRef(imageModelRef) },
         }),
       });
@@ -266,19 +287,36 @@ export function CharacterCard({
         <div className="space-y-2">
             <InlineModelPicker capability="image" value={imageModelRef} onChange={setImageModelRef} />
             <div className="flex gap-2">
-              <Button
-                onClick={handleGenerateImage}
-                disabled={isGenerating}
-                className="flex-1"
-                size="sm"
-              >
-                {isGenerating ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Sparkles className="h-3.5 w-3.5" />
+              <div className="relative flex-1" data-layout-menu>
+                <Button
+                  onClick={() => setLayoutMenu((v) => !v)}
+                  disabled={isGenerating}
+                  className="w-full"
+                  size="sm"
+                >
+                  {isGenerating ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  {isGenerating ? t("common.generating") : t("character.generateImage")}
+                  <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                </Button>
+                {layoutMenu && (
+                  <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-md border border-[--border-subtle] bg-white p-1 shadow-lg">
+                    {LAYOUT_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => handleGenerateImage(opt.value)}
+                        className="flex w-full flex-col items-start rounded px-2 py-1.5 text-left text-[11px] text-[--text-secondary] transition-colors hover:bg-primary/10 hover:text-primary"
+                      >
+                        <span className="font-medium">{opt.label}</span>
+                        <span className="text-[10px] text-[--text-muted]">{opt.hint}</span>
+                      </button>
+                    ))}
+                  </div>
                 )}
-                {isGenerating ? t("common.generating") : t("character.generateImage")}
-              </Button>
+              </div>
               <Button
                 variant="outline"
                 size="sm"

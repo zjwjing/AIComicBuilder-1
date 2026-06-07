@@ -258,7 +258,13 @@ export async function handleBatchFrameGenerate(
       const filteredChars = (shotCharNameSet.size > 0
         ? charsWithImages.filter((c) => shotCharNameSet.has(c.name))
         : charsWithImages).slice(0, 6);
-      const shotCharRefImages = filteredChars.map((c) => c.referenceImage!);
+      // Prefer the single-portrait ref (auto-cropped from multi-view sheets)
+      // for HiDream-O1 keyframe generation. The full multi-view sheet is kept
+      // on disk and shown in the UI, but it triggers contact-sheet layout
+      // mimicry when fed to a model that interprets it as a layout template.
+      const shotCharRefImages = filteredChars.map((c) =>
+        c.referenceImageSingle || c.referenceImage!,
+      );
       const shotCharRefLabels = filteredChars.map((c) => c.name);
       const keyframeReferenceInputs = getKeyframeReferenceInputs(
         shotCharRefImages,
@@ -476,7 +482,12 @@ export async function handleSingleFrameGenerate(
   const filteredChars = (shotCharNameSet.size > 0
     ? projectCharacters.filter((c) => c.referenceImage && shotCharNameSet.has(c.name))
     : projectCharacters.filter((c) => c.referenceImage)).slice(0, 6);
-  const shotCharRefImages = filteredChars.map((c) => c.referenceImage as string);
+  // Prefer the auto-cropped single portrait over the full multi-view sheet
+  // when available — HiDream-O1 multi-reference treats the layout as a
+  // template to replicate rather than as identity information.
+  const shotCharRefImages = filteredChars.map(
+    (c) => (c.referenceImageSingle ?? c.referenceImage) as string,
+  );
   const shotCharRefLabels = filteredChars.map((c) => c.name);
   const keyframeReferenceInputs = getKeyframeReferenceInputs(
     shotCharRefImages,
