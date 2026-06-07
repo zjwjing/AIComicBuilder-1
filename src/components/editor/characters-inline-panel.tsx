@@ -24,7 +24,7 @@ interface Character {
   name: string;
   referenceImage: string | null;
   referenceImageSingle?: string | null;
-  referenceLayout?: ReferenceLayout;
+  referenceLayout?: ReferenceLayout | null;
 }
 
 interface CharactersInlinePanelProps {

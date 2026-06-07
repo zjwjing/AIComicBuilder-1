@@ -7,6 +7,8 @@ interface Character {
   description: string;
   referenceImage: string | null;
   referenceImageHistory?: string | null;
+  referenceImageSingle?: string | null;
+  referenceLayout?: "single" | "three-view" | "four-view" | null;
   visualHint?: string | null;
   scope?: string;
   episodeId?: string | null;

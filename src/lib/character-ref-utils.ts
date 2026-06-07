@@ -98,10 +98,14 @@ export async function extractCharacterReferencePortrait(
   const padY = Math.floor((maxDim - croppedH) / 2);
 
   const parsed = path.parse(imagePath);
-  const portraitRelPath = path.join(parsed.dir, `${parsed.name}_single${parsed.ext}`);
+  const portraitFileName = `${parsed.name}_single${parsed.ext}`;
+  const uploadDir = process.env.UPLOAD_DIR || "./uploads";
   const portraitAbsPath = path.isAbsolute(imagePath)
-    ? path.join(path.dirname(imagePath), `${parsed.name}_single${parsed.ext}`)
-    : path.join(process.env.UPLOAD_DIR || "./uploads", portraitRelPath);
+    ? path.join(path.dirname(imagePath), portraitFileName)
+    : path.join(uploadDir, parsed.dir, portraitFileName);
+  const portraitRelPath = path.isAbsolute(imagePath)
+    ? path.relative(uploadDir, portraitAbsPath)
+    : path.join(parsed.dir, portraitFileName);
 
   await sharp(croppedBuf)
     .extend({
@@ -116,13 +120,5 @@ export async function extractCharacterReferencePortrait(
   return portraitRelPath;
 }
 
-/**
- * Detect the layout of a stored character reference image by its aspect ratio.
- * Used when migrating legacy 4-view refs to the new single-portrait cache.
- */
-export function detectLayoutFromAspect(width: number, height: number): CharacterReferenceLayout {
-  const aspect = width / height;
-  if (aspect > 2.5 || aspect < 0.4) return "three-view";
-  if (aspect > 1.4 || aspect < 0.7) return "three-view";
-  return "four-view";
-}
+// (no helpers re-exported below — `extractCharacterReferencePortrait` is the
+// only public surface of this module)
