@@ -1,5 +1,35 @@
 # Progress
 
+## 2026-06-07 Session (续) — 多角色关键帧一致性修复 (UI layout selector + auto-crop)
+- 根因分析: c25e3d8 修复"不再生成重复人物"过于激进, 禁用了所有多 ref 路径. 实际
+  `HiDreamO1ReferenceImages` 是 ComfyUI 官方核心节点 (comfy_extras/nodes_hidream_o1.py:42),
+  支持 1-10 多 ref (1 张=指令编辑, 2-10 张=多参考). workflow 本身支持多 ref.
+- 真正的根因: 用户提供的 4 视图角色设定图被模型识别为"分镜布局模板", 而不是角色参考
+- 修复方案 (用户选择): UI 加 layout 选择器, 生成后 sharp 自动裁剪单人物立绘, 关键帧用裁剪结果
+  - 备选: 仅自动裁剪 (隐式) — 不够灵活
+  - 备选: IP-Adapter / OpenPose — 改动太大, 跳过
+- Schema (2a87d52):
+  - `characters.referenceLayout` (text, default 'four-view') — 'single' | 'three-view' | 'four-view'
+  - `characters.referenceImageSingle` (text, nullable) — sharp 裁剪后的单人物立绘
+  - `drizzle/0054_add_character_reference_layout.sql` + journal idx=54
+  - 导出 `CharacterReferenceLayout` 类型 + `normalizeCharacterReferenceLayout()` helper
+- Prompts + utility (5203641):
+  - 4 个 prompt (characterImageDef/SimpleDef/Ideogram4Def/HiDreamO1Def) 接受
+    `referenceLayout` 参数, 输出 single/3-view/4-view 三种变体
+  - 新增 `src/lib/character-ref-utils.ts::extractCharacterReferencePortrait`:
+    从宽高比自动检测实际布局 (横条/竖条/2x2), 裁剪前视图 (5% margin), 补白到正方形
+  - handler: `handleSingleCharacterImage` + `handleBatchCharacterImage` 读 layout, 传 prompt,
+    生成后裁剪, 写回 `referenceImageSingle` + `referenceLayout`
+  - 加 `sharp@^0.34.5` 依赖
+- UI + 关键帧集成 (e5300af):
+  - `characters-inline-panel.tsx`: 行内生成按钮加 LAYOUT_OPTIONS 下拉 (单图/三视图/四视图)
+  - `character-card.tsx`: 详情卡片镜像同一 layout 下拉
+  - `frames.ts` 的 `shotCharRefImages` 优先用 `referenceImageSingle` (裁剪立绘) 而非
+    `referenceImage` (4 视图设定图), 解决模型把 4 视图当分镜模板的 bug
+- 测试 632/632 ✅ lint ✅ tsc ✅
+- 待办: 用户端用 2 个角色场景, 把两个角色都设为"单图"或"三视图"重新生成 ref, 验证
+  关键帧不再出现 4 个重复人物
+
 ## 2026-06-07 Session — HiDream-O1 工作流对齐官方 dev 参数
 - 诊断 web app "不符合要求"的生图：pink/blue 噪点图是 ComfyUI 端发散
 - 关键发现：通过 ComfyUI `object_info/ModelNoiseScale` 的 tooltip 看到官方推荐值 **"HiDream-O1 base: 8.0, dev: 7.5"**，当前 `noise_scale: 6` 显著偏低 → 信号被噪声淹没
