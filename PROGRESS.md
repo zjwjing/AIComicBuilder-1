@@ -27,8 +27,59 @@
   - `frames.ts` 的 `shotCharRefImages` 优先用 `referenceImageSingle` (裁剪立绘) 而非
     `referenceImage` (4 视图设定图), 解决模型把 4 视图当分镜模板的 bug
 - 测试 632/632 ✅ lint ✅ tsc ✅
+- 审计 + 重构 (2f6c570 + cbc429b, 当前 6 commits ahead of c25e3d8):
+  - **return-path 修复** (`character-ref-utils.ts:46-67`): 相对输入 → `path.join(parsed.dir, "${name}_single${ext}")`;
+    绝对输入 → `path.relative(uploadDir, absPath)`。原代码绝对输入下 `path.join` 也返回绝对路径,
+    仅因 `uploadUrl` "strip up to uploads/" 规范化才偶然工作, 文档化收紧
+  - **删除死代码** `detectLayoutFromAspect` — 从未调用, 第一分支 `aspect>1.4 && (cols===3 || cols===4)`
+    永远不可能 (上面已经 aspect>1.4 直接返回 layout 而没有 `rows`/`cols` 变量)
+  - **类型同步**: `src/stores/project-store.ts:4-13` `Character` 接口新增
+    `referenceImageSingle?: string | null` + `referenceLayout?: ReferenceLayout | null`;
+    `characters-inline-panel.tsx` 的 `Character` 接口允许 `referenceLayout: null` (legacy)
+  - **新增测试** `src/lib/__tests__/character-ref-utils.test.ts` (7 个):
+    - single no-op (返回 null)
+    - 2x2 grid 裁剪 (5% margin)
+    - 非正方形 cells + white padding 到正方形
+    - 3-view horizontal (aspect > 1.4)
+    - 4-view vertical (aspect < 0.7)
+    - grid fallback (aspect 0.95-1.05)
+    - `uploadUrl` 跨平台 round-trip
+  - **`parseReferenceImageHistory(raw)`** 抽到 `character.ts:48-58` — 替换 3 处重复的
+    `try { JSON.parse(...) } catch { return [] }`; 失败返回 `[]`
+  - **文档化假设**: "front view is top-left / leftmost / topmost" 在 `character-ref-utils.ts`
+    加注释, 列出 3 个未来工作选项 (更强 prompt / CLIP 检测 / `frontCellIndex` 参数)
+- **测试 639/639 ✅ lint ✅ tsc ✅** (31 → 32 test files, +7 tests)
+- **数据库迁移** (用户原 500 报错根因): 直接 `db.exec` of `0054_add_character_reference_layout.sql`
+  到 `I:\claw\AIComicBuilder-main\data\aicomic.db` + 手动 hash 插入 `__drizzle_migrations`。
+  验证: `characters` 表 15 列 (含 `reference_image_single TEXT` + `reference_layout TEXT NOT NULL DEFAULT 'four-view'`),
+  现有行 `reference_image_single: null, reference_layout: "four-view"`
+- **dev server**: 杀旧 PID 30972, 启新 PID 23832 → 8900 (1.4GB) 在 3000 端口监听;
+  `bootstrap()` 已重跑 migrations + AI providers。
+  残留 500 是 Next.js dev 模式 HMR 编译抖动 ("Jest worker 2 child process exceptions"
+  + "EPIPE" 写日志失败), 不是代码问题 — 慢请求 200 OK (e.g. `GET /api/projects/SKB6CNwqAn5H?exclude=shots 200 in 119689ms`)
+- **审计后 fix (d33c6b3, 7 commits ahead of c25e3d8) — 内容布局检测 bug**:
+  - **bug**: aspect-ratio heuristic 把 16:9 (2560×1440) 2×2 网格误判为 1×4 横条,
+    输出空灰底; 真因是 16:9 图像可能是 2×2 网格 (1280×720 cells) 或 1×4 横条 (640×1440 cells),
+    二者 aspect 相同
+  - **bug 2**: "非白像素" 距离度量对**灰色背景**的角色设定图完全失效 (灰色 cell 全算前景)
+  - **bug 3**: 生产路径 `uploads\frames\abc.png` 含 `uploads/` 前缀,
+    `path.join(uploadDir, imagePath)` → `uploads/uploads/frames/abc.png` ENOENT
+  - **修复** (`src/lib/character-ref-utils.ts`):
+    1. **背景色检测** — 从 16×16 角点采样平均色, 前景 = 与背景 RGB 距离 > 30
+    2. **多候选评分** — four-view 试 {2×2, 1×4, 1×3, 4×1}; three-view 试 {1×3, 1×4, 4×1, 2×2};
+       每候选计算前景密度
+    3. **保护用户选择** — 候选必须比请求布局密度高 0.1 才覆盖; 平局默认选请求布局
+       (避免 2×2 vs 4×1 在顶部行含 silhouette 时翻转)
+    4. **路径解析** — `resolveUploadPath()` 剥掉 `uploads/` 前缀, 输入兼容 cwd-relative
+       (`uploads/frames/abc.png`) 和 uploadDir-relative (`frames/abc.png`),
+       输出保持 `uploads/...` 形式以匹配 `referenceImage` 约定
+  - **新测试** (3 个): 1×4 模型重排检测, 16:9 2×2 网格检测, 空白图返回 null, DB-style 路径 round-trip
+  - **重建脚本** `scripts/reprocess-character-refs.ts`: 一次性跑完 28 个现有角色,
+    验证视觉确认 (兔子从 2×2 网格裁出正面立绘 1152×1152, 乌龟从 1×4 横条裁出 1240×1240)
+  - **测试 639 → 642 ✅ lint ✅ tsc ✅**
 - 待办: 用户端用 2 个角色场景, 把两个角色都设为"单图"或"三视图"重新生成 ref, 验证
-  关键帧不再出现 4 个重复人物
+  关键帧不再出现 4 个重复人物 (28 个角色 single portrait 已自动生成, 现在重生成 keyframe
+  应该用 `referenceImageSingle` 而不是 4 视图设定图)
 
 ## 2026-06-07 Session — HiDream-O1 工作流对齐官方 dev 参数
 - 诊断 web app "不符合要求"的生图：pink/blue 噪点图是 ComfyUI 端发散
