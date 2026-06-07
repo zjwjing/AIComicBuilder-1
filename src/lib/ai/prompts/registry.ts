@@ -9,7 +9,7 @@ import type { PromptDefinition } from "./registry-helpers";
 
 // Import all definitions
 import { scriptOutlineDef, scriptGenerateDef, scriptParseDef, scriptSplitDef } from "./registry-script";
-import { characterExtractDef, importCharacterExtractDef, characterImageDef } from "./registry-character";
+import { characterExtractDef, importCharacterExtractDef, characterImageDef, characterImageSimpleDef, characterImageIdeogram4Def, characterImageHiDreamO1Def } from "./registry-character";
 import { shotSplitDef, shotKeyframeAssetsDef } from "./registry-shot";
 import { battleChoreographyDef } from "./registry-battle";
 import { frameGenerateFirstDef, frameGenerateLastDef, sceneFrameGenerateDef, refImagePromptsDef } from "./registry-frame";
@@ -21,7 +21,7 @@ import { __setRegistryMap, getPromptDefinition, getDefaultSlotContents } from ".
 // Build registry
 export const PROMPT_REGISTRY: PromptDefinition[] = [
   scriptOutlineDef, scriptGenerateDef, scriptParseDef, scriptSplitDef,
-  characterExtractDef, importCharacterExtractDef, characterImageDef,
+  characterExtractDef, importCharacterExtractDef, characterImageDef, characterImageSimpleDef, characterImageIdeogram4Def, characterImageHiDreamO1Def,
   shotSplitDef, shotKeyframeAssetsDef, battleChoreographyDef,
   frameGenerateFirstDef, frameGenerateLastDef, sceneFrameGenerateDef, refImagePromptsDef,
   videoGenerateDef, refVideoGenerateDef, refVideoPromptDef, fourGridGenerateDef,

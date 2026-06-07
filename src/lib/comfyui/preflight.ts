@@ -86,7 +86,7 @@ export const WORKFLOW_NODE_REQUIREMENTS: Record<string, string[]> = {
     "LoraLoaderModelOnly", "LTXVLatentUpsampler", "ResizeImagesByLongerEdge",
     "ResizeImageMaskNode", "ComfyMathExpression", "LTXVConcatAVLatent",
     "LTXVSeparateAVLatent", "LTXVAudioVAEDecode", "LTXVEmptyLatentAudio",
-    "LatentUpscaleModelLoader", "LoadImage",
+    "LatentUpscaleModelLoader", "LoadImage", "NAGuidance",
   ],
   "wan-i2v": [
     "WanVideoModelLoader", "WanVideoSampler", "WanVideoDecode",
@@ -106,6 +106,28 @@ export const WORKFLOW_NODE_REQUIREMENTS: Record<string, string[]> = {
     "LoadImage", "ImageScaleToTotalPixels", "SaveImage",
     "CheckpointLoaderSimple", "LoraLoaderModelOnly", "CLIPLoader",
     "GetImageSize", "ZML_PresetResolutionV2", "easy cleanGpuUsed",
+  ],
+  "ideogram4-comfyui": [
+    "SaveImage", "CLIPLoader", "VAELoader", "UNETLoader",
+    "CLIPTextEncode", "VAEDecode", "EmptyFlux2LatentImage",
+    "RandomNoise", "KSamplerSelect", "SamplerCustomAdvanced",
+    "CFGOverride", "DualModelGuider", "Ideogram4Scheduler",
+    "ComfyMathExpression", "ComfyNumberConvert",
+    "ResolutionSelector", "ConditioningZeroOut",
+    "StringConcatenate", "StringReplace",
+    "PrimitiveInt", "PrimitiveStringMultiline",
+    "JsonExtractString", "CustomCombo",
+    "MarkdownNote", "TextGenerate", "PreviewAny",
+  ],
+  "hidream-o1-comfyui": [
+    "SaveImage", "CheckpointLoaderSimple", "CLIPTextEncode",
+    "VAEDecode", "SamplerCustom", "BasicScheduler",
+    "ModelNoiseScale", "KSamplerSelect", "EmptyHiDreamO1LatentImage",
+    "HiDreamO1PatchSeamSmoothing",
+  ],
+  "hidream-o1-comfyui-ref": [
+    "HiDreamO1ReferenceImages", "ComfySwitchNode", "PrimitiveBoolean",
+    "LoadImage",
   ],
 };
 
@@ -186,6 +208,7 @@ export async function preflightWorkflow(
   workflowFamily: string,
   requiredModels: ModelRef[],
   authHeaders: Record<string, string> = {},
+  extraNodeTypes?: string[],
 ): Promise<PreflightResult> {
   const result: PreflightResult = {
     ok: false,
@@ -207,8 +230,11 @@ export async function preflightWorkflow(
   }
   result.serverReachable = true;
 
-  const requiredNodeTypes = WORKFLOW_NODE_REQUIREMENTS[workflowFamily];
-  if (requiredNodeTypes) {
+  const familyNodeTypes = WORKFLOW_NODE_REQUIREMENTS[workflowFamily] || [];
+  const requiredNodeTypes = extraNodeTypes
+    ? [...familyNodeTypes, ...extraNodeTypes]
+    : familyNodeTypes;
+  if (requiredNodeTypes.length > 0) {
     const registeredTypes = new Set(Object.keys(objectInfo));
     const missingNodeTypes = requiredNodeTypes.filter((t) => !registeredTypes.has(t));
     result.missingNodeTypes = missingNodeTypes;

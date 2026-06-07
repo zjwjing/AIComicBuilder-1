@@ -6,6 +6,8 @@ export interface TextOptions {
   images?: string[];  // local file paths for vision input
 }
 
+export type WorkflowFamily = "z-image-turbo-comfyui" | "ideogram4-comfyui" | "qwen-edit-dual" | "hidream-o1-comfyui";
+
 export interface ImageOptions {
   model?: string;
   size?: string;
@@ -18,6 +20,10 @@ export interface ImageOptions {
   referenceLabels?: string[];
   /** Semantic roles for references, e.g. character/costume/scene/pose. */
   referenceRoles?: string[];
+  /** Explicit workflow selection for multi-workflow providers like ComfyUI. */
+  workflowFamily?: WorkflowFamily;
+  /** Optional negative prompt for providers/workflows that support it. */
+  negativePrompt?: string;
 }
 
 export interface AIProvider {

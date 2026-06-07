@@ -406,3 +406,116 @@ export const characterImageDef: PromptDefinition = {
   },
 };
 
+export const characterImageSimpleDef: PromptDefinition = {
+  key: "character_image_simple",
+  nameKey: "promptTemplates.prompts.characterImageSimple",
+  descriptionKey: "promptTemplates.prompts.characterImageSimpleDesc",
+  category: "character",
+  slots: [
+    slot("style_and_format", `3D迪士尼动画风格，皮克斯式渲染，角色全身立绘，纯白背景，角色居中站立，不要出现任何文字标签。`, true),
+    slot("character_info", `{{DESCRIPTION_PLACEHOLDER}}`, false),
+  ],
+  buildFullPrompt(sc, params) {
+    const s = this.slots;
+    const r = (k: string) => resolve(sc, s, k);
+    const characterName = (params?.characterName as string) ?? undefined;
+    const description = (params?.description as string) ?? "";
+    const charInfo = `角色名：${characterName ?? ""}\n角色描述：${description}`;
+    return `${r("style_and_format")}\n\n${charInfo}`;
+  },
+};
+
+// ─── 7. character_image_ideogram4 ─────────────────────────
+
+export const characterImageIdeogram4Def: PromptDefinition = {
+  key: "character_image_ideogram4",
+  nameKey: "promptTemplates.prompts.characterImageIdeogram4",
+  descriptionKey: "promptTemplates.prompts.characterImageIdeogram4Desc",
+  category: "character",
+  slots: [
+    slot("style_description", "", true),
+    slot("character_info", `{{DESCRIPTION_PLACEHOLDER}}`, false),
+  ],
+  buildFullPrompt(sc, params) {
+    const characterName = (params?.characterName as string) ?? "";
+    const rawDescription = (params?.description as string) ?? "";
+    const description = /[\u4e00-\u9fff]/.test(rawDescription) ? "" : rawDescription;
+
+    const prompt = {
+      high_level_description: `${characterName} turnaround sheet, full body, four views in 2x2 grid on white background. ${description}`,
+      style_description: {
+        aesthetics: "3D Disney-Pixar animation style, soft global illumination, exaggerated proportions, smooth organic curves, clean high-saturation materials, cel-shaded lighting with subsurface scattering skin texture",
+        lighting: "Soft diffused studio lighting, even illumination, no harsh shadows, pure white background",
+        medium: "3D character model turnaround sheet, professional character design presentation",
+        color_palette: ["#FFFFFF", "#E0E0E0", "#C0C0C0"],
+      },
+      compositional_deconstruction: {
+        background: "Pure white seamless background, clean studio lighting",
+        elements: [
+          {
+            type: "obj",
+            bbox: [10, 10, 490, 490],
+            desc: `Front view of ${characterName} facing camera, full body, standing centered, symmetrical pose, white background.`,
+            color_palette: ["#FFFFFF", "#E0E0E0", "#C0C0C0"],
+          },
+          {
+            type: "obj",
+            bbox: [510, 10, 990, 490],
+            desc: `Back view of ${characterName}, dorsal side, full body from behind, white background.`,
+            color_palette: ["#FFFFFF", "#E0E0E0", "#C0C0C0"],
+          },
+          {
+            type: "obj",
+            bbox: [10, 510, 490, 990],
+            desc: `Side profile of ${characterName}, facing left, full body profile, white background.`,
+            color_palette: ["#FFFFFF", "#E0E0E0", "#C0C0C0"],
+          },
+          {
+            type: "obj",
+            bbox: [510, 510, 990, 990],
+            desc: `Top-down view of ${characterName}, looking down from above, showing top of head, shoulders, complete body silhouette from above.`,
+            color_palette: ["#FFFFFF", "#E0E0E0", "#C0C0C0"],
+          },
+        ],
+      },
+    };
+
+    return JSON.stringify(prompt, null, 2);
+  },
+};
+
+// ─── 8. character_image_hidream_o1 ───────────────────────
+
+export const characterImageHiDreamO1Def: PromptDefinition = {
+  key: "character_image_hidream_o1",
+  nameKey: "promptTemplates.prompts.characterImageHiDreamO1",
+  descriptionKey: "promptTemplates.prompts.characterImageHiDreamO1Desc",
+  category: "character",
+  slots: [
+    slot("style_description", "", true),
+    slot("character_info", `{{DESCRIPTION_PLACEHOLDER}}`, false),
+  ],
+  buildFullPrompt(sc, params) {
+    const characterName = (params?.characterName as string) ?? "";
+    const rawDescription = (params?.description as string) ?? "";
+
+    const prompt = `Character four-view turnaround sheet — professional character design reference.
+
+Character name: ${characterName}
+
+Character description: ${rawDescription}
+
+Layout: A single image containing exactly four views of the character arranged in a 2x2 grid on pure white background:
+- Top-left: Front view — character facing forward, full body, standing centered, symmetrical pose, showing complete outfit and accessories.
+- Top-right: Back view — dorsal side, full body from behind, showing hairstyle back detail and clothing rear.
+- Bottom-left: Side profile — facing right, full body profile, clear silhouette showing nose-chin line and side costume detail.
+- Bottom-right: Three-quarter view — rotated approximately 45 degrees, showing facial depth and three-dimensional form.
+
+All four views must be perfectly aligned at the head top and foot bottom. Same lighting direction and intensity across all four views. Clean professional three-point lighting, pure white background, no shadows.
+
+Render with highest quality, rich detail in fabric texture, skin surface, and material properties. Consistent character identity across all views — same face, same proportions, same outfit colors, same expression.`;
+
+    return prompt;
+  },
+};
+

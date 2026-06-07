@@ -12,7 +12,7 @@ import {
 } from "@/lib/generate-utils";
 import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildCharacterExtractPrompt } from "@/lib/ai/prompts/character-extract";
-import { buildCharacterTurnaroundPrompt } from "@/lib/ai/prompts/character-image";
+import { detectImageModelFamily } from "@/lib/ai/prompts/character-image";
 import { resolveImageProvider } from "@/lib/ai/provider-factory";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY, DEFAULT_CHARACTER_IMAGE_SIZE } from "@/lib/config/defaults";
 import { id as genId } from "@/lib/id";
@@ -237,7 +237,28 @@ export async function handleSingleCharacterImage(
   }
 
   const ai = resolveImageProvider(modelConfig);
-  const prompt = buildCharacterTurnaroundPrompt(character.description || character.name, character.name);
+  const family = detectImageModelFamily(modelConfig?.image?.protocol, modelConfig?.image?.modelId);
+
+  let description = character.description || character.name;
+  if (family === "ideogram4" && /[\u4e00-\u9fff]/.test(description) && modelConfig?.text) {
+    const translateModel = createLanguageModel(modelConfig.text);
+    const { text } = await generateText({
+      model: translateModel,
+      system: "Translate Chinese 3D character descriptions to English. Keep all visual details (colors, materials, clothing, proportions, accessories). Output only the English translation.",
+      prompt: `Translate this character description:\n${description}`,
+    });
+    description = text.trim();
+  }
+
+  let promptKey: string;
+  if (family === "gpt") promptKey = "character_image";
+  else if (family === "ideogram4") promptKey = "character_image_ideogram4";
+  else if (family === "hidream") promptKey = "character_image_hidream_o1";
+  else promptKey = "character_image_simple";
+  const prompt = await resolvePrompt(promptKey, { userId: _userId, projectId: _projectId }, {
+    characterName: character.name,
+    description,
+  });
 
   // Pass existing reference images as subject references for consistency
   const refImages: string[] = [];
@@ -257,6 +278,7 @@ export async function handleSingleCharacterImage(
       aspectRatio: DEFAULT_ASPECT_RATIO,
       quality: DEFAULT_IMAGE_QUALITY,
       ...(subjectRefs.length > 0 && { referenceImages: subjectRefs }),
+      workflowFamily: family === "ideogram4" ? "ideogram4-comfyui" : family === "hidream" ? "hidream-o1-comfyui" : undefined,
     });
 
     // Append to history
@@ -339,12 +361,32 @@ export async function handleBatchCharacterImage(
   }
 
   const ai = resolveImageProvider(modelConfig);
+  const family = detectImageModelFamily(modelConfig?.image?.protocol, modelConfig?.image?.modelId);
+  let promptKey: string;
+  if (family === "gpt") promptKey = "character_image";
+  else if (family === "ideogram4") promptKey = "character_image_ideogram4";
+  else if (family === "hidream") promptKey = "character_image_hidream_o1";
+  else promptKey = "character_image_simple";
 
   const results: Array<{ characterId: string; name: string; imagePath?: string; status: string; error?: string }> = [];
 
   for (const character of needImages) {
     try {
-      const prompt = buildCharacterTurnaroundPrompt(character.description || character.name, character.name);
+      let description = character.description || character.name;
+      if (family === "ideogram4" && /[\u4e00-\u9fff]/.test(description) && modelConfig?.text) {
+        const translateModel = createLanguageModel(modelConfig.text);
+        const { text } = await generateText({
+          model: translateModel,
+          system: "Translate Chinese 3D character descriptions to English. Keep all visual details (colors, materials, clothing, proportions, accessories). Output only the English translation.",
+          prompt: `Translate this character description:\n${description}`,
+        });
+        description = text.trim();
+      }
+
+      const prompt = await resolvePrompt(promptKey, { userId: _userId, projectId }, {
+        characterName: character.name,
+        description,
+      });
 
       // Pass existing reference images as subject references for consistency
       const refImages: string[] = [];
@@ -362,6 +404,7 @@ export async function handleBatchCharacterImage(
         aspectRatio: "16:9",
         quality: DEFAULT_IMAGE_QUALITY,
         ...(subjectRefs.length > 0 && { referenceImages: subjectRefs }),
+        workflowFamily: family === "ideogram4" ? "ideogram4-comfyui" : family === "hidream" ? "hidream-o1-comfyui" : undefined,
       });
 
       // Append to history
