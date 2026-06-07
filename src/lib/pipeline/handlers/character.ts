@@ -20,6 +20,31 @@ import {
   loadShotLegacyViewsBatch,
   patchAsset,
 } from "@/lib/shot-asset-utils";
+import type { CharacterReferenceLayout } from "@/lib/ai/prompts/registry-character";
+import { extractCharacterReferencePortrait } from "@/lib/character-ref-utils";
+
+function readLayoutFromPayload(
+  payload: Record<string, unknown> | undefined,
+): CharacterReferenceLayout | undefined {
+  const value = payload?.referenceLayout;
+  if (value === "single" || value === "three-view" || value === "four-view") {
+    return value;
+  }
+  return undefined;
+}
+
+function layoutFromCharacter(
+  character: { referenceLayout: string | null },
+): CharacterReferenceLayout {
+  if (
+    character.referenceLayout === "single" ||
+    character.referenceLayout === "three-view" ||
+    character.referenceLayout === "four-view"
+  ) {
+    return character.referenceLayout;
+  }
+  return "four-view";
+}
 
 export async function handleCharacterExtract(
   projectId: string,
@@ -239,6 +264,8 @@ export async function handleSingleCharacterImage(
   const ai = resolveImageProvider(modelConfig);
   const family = detectImageModelFamily(modelConfig?.image?.protocol, modelConfig?.image?.modelId);
 
+  const referenceLayout = readLayoutFromPayload(payload) ?? layoutFromCharacter(character);
+
   let description = character.description || character.name;
   if (family === "ideogram4" && /[\u4e00-\u9fff]/.test(description) && modelConfig?.text) {
     const translateModel = createLanguageModel(modelConfig.text);
@@ -258,11 +285,18 @@ export async function handleSingleCharacterImage(
   const prompt = await resolvePrompt(promptKey, { userId: _userId, projectId: _projectId }, {
     characterName: character.name,
     description,
+    referenceLayout,
   });
 
-  // Pass existing reference images as subject references for consistency
+  // Pass existing reference images as subject references for consistency.
+  // When the character has a single-portrait ref (auto-cropped from a previous
+  // multi-view generation), prefer that — it carries character identity without
+  // the multi-view layout that confuses downstream image models.
   const refImages: string[] = [];
-  if (character.referenceImage) refImages.push(character.referenceImage);
+  if (character.referenceImageSingle) refImages.push(character.referenceImageSingle);
+  if (character.referenceImage && !refImages.includes(character.referenceImage)) {
+    refImages.push(character.referenceImage);
+  }
   try {
     const history = JSON.parse(character.referenceImageHistory || "[]") as string[];
     for (const img of history) {
@@ -293,9 +327,31 @@ export async function handleSingleCharacterImage(
       history.push(imagePath);
     }
 
+    // For multi-view layouts, auto-crop the front sub-view into a single-portrait
+    // ref that downstream keyframe generation can use without the layout.
+    let singlePortraitPath: string | null = null;
+    if (referenceLayout !== "single") {
+      try {
+        singlePortraitPath = await extractCharacterReferencePortrait(
+          imagePath,
+          referenceLayout,
+        );
+      } catch (cropErr) {
+        console.warn(
+          `[SingleCharacterImage] auto-crop failed for ${character.name}:`,
+          cropErr instanceof Error ? cropErr.message : cropErr,
+        );
+      }
+    }
+
     await db
       .update(characters)
-      .set({ referenceImage: imagePath, referenceImageHistory: JSON.stringify(history) })
+      .set({
+        referenceImage: imagePath,
+        referenceImageHistory: JSON.stringify(history),
+        referenceImageSingle: singlePortraitPath ?? character.referenceImageSingle,
+        referenceLayout,
+      })
       .where(eq(characters.id, characterId));
 
     // Mark downstream ref images stale: any shot's referenceImages that include this character
@@ -319,9 +375,16 @@ export async function handleSingleCharacterImage(
         staleCount++;
       }
     }
-    console.log(`[SingleCharacterImage] ${character.name} regenerated; marked ${staleCount} shots' ref images as stale`);
+    console.log(`[SingleCharacterImage] ${character.name} regenerated (layout=${referenceLayout}${singlePortraitPath ? ", cropped" : ""}); marked ${staleCount} shots' ref images as stale`);
 
-    return NextResponse.json({ characterId, imagePath, status: "ok", staleShots: staleCount });
+    return NextResponse.json({
+      characterId,
+      imagePath,
+      referenceLayout,
+      singlePortraitPath,
+      status: "ok",
+      staleShots: staleCount,
+    });
   } catch (err) {
     console.error(`[SingleCharacterImage] Error for ${character.name}:`, err);
     return NextResponse.json({ characterId, status: "error", error: extractErrorMessage(err) }, { status: 500 });
@@ -362,16 +425,19 @@ export async function handleBatchCharacterImage(
 
   const ai = resolveImageProvider(modelConfig);
   const family = detectImageModelFamily(modelConfig?.image?.protocol, modelConfig?.image?.modelId);
+  const defaultLayout = readLayoutFromPayload(_payload) ?? "four-view";
   let promptKey: string;
   if (family === "gpt") promptKey = "character_image";
   else if (family === "ideogram4") promptKey = "character_image_ideogram4";
   else if (family === "hidream") promptKey = "character_image_hidream_o1";
   else promptKey = "character_image_simple";
 
-  const results: Array<{ characterId: string; name: string; imagePath?: string; status: string; error?: string }> = [];
+  const results: Array<{ characterId: string; name: string; imagePath?: string; referenceLayout?: string; singlePortraitPath?: string | null; status: string; error?: string }> = [];
 
   for (const character of needImages) {
     try {
+      const referenceLayout = layoutFromCharacter(character) || defaultLayout;
+
       let description = character.description || character.name;
       if (family === "ideogram4" && /[\u4e00-\u9fff]/.test(description) && modelConfig?.text) {
         const translateModel = createLanguageModel(modelConfig.text);
@@ -386,11 +452,18 @@ export async function handleBatchCharacterImage(
       const prompt = await resolvePrompt(promptKey, { userId: _userId, projectId }, {
         characterName: character.name,
         description,
+        referenceLayout,
       });
 
-      // Pass existing reference images as subject references for consistency
+      // Pass existing reference images as subject references for consistency.
+      // Prefer the single-portrait ref (auto-cropped from a previous generation)
+      // so the new ref inherits the character identity without the multi-view
+      // layout that confuses downstream image models.
       const refImages: string[] = [];
-      if (character.referenceImage) refImages.push(character.referenceImage);
+      if (character.referenceImageSingle) refImages.push(character.referenceImageSingle);
+      if (character.referenceImage && !refImages.includes(character.referenceImage)) {
+        refImages.push(character.referenceImage);
+      }
       try {
         const history = JSON.parse(character.referenceImageHistory || "[]") as string[];
         for (const img of history) {
@@ -413,11 +486,39 @@ export async function handleBatchCharacterImage(
       if (character.referenceImage && !history.includes(character.referenceImage)) history.push(character.referenceImage);
       if (!history.includes(imagePath)) history.push(imagePath);
 
+      // Auto-crop multi-view ref to single portrait
+      let singlePortraitPath: string | null = null;
+      if (referenceLayout !== "single") {
+        try {
+          singlePortraitPath = await extractCharacterReferencePortrait(
+            imagePath,
+            referenceLayout,
+          );
+        } catch (cropErr) {
+          console.warn(
+            `[BatchCharacterImage] auto-crop failed for ${character.name}:`,
+            cropErr instanceof Error ? cropErr.message : cropErr,
+          );
+        }
+      }
+
       await db
         .update(characters)
-        .set({ referenceImage: imagePath, referenceImageHistory: JSON.stringify(history) })
+        .set({
+          referenceImage: imagePath,
+          referenceImageHistory: JSON.stringify(history),
+          referenceImageSingle: singlePortraitPath ?? character.referenceImageSingle,
+          referenceLayout,
+        })
         .where(eq(characters.id, character.id));
-      results.push({ characterId: character.id, name: character.name, imagePath, status: "ok" });
+      results.push({
+        characterId: character.id,
+        name: character.name,
+        imagePath,
+        referenceLayout,
+        singlePortraitPath,
+        status: "ok",
+      });
     } catch (err) {
       console.error(`[BatchCharacterImage] Error for ${character.name}:`, err);
       results.push({ characterId: character.id, name: character.name, status: "error", error: extractErrorMessage(err) });

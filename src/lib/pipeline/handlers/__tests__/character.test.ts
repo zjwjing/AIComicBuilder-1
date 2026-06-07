@@ -14,6 +14,7 @@ const mockDetectFamily = vi.hoisted(() => vi.fn());
 const mockLoadLegacy = vi.hoisted(() => vi.fn());
 const mockPatchAsset = vi.hoisted(() => vi.fn());
 const mockExtractError = vi.hoisted(() => vi.fn());
+const mockExtractPortrait = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 
 vi.mock("@/lib/db", () => ({
   db: { select: mockSelect, update: mockUpdate },
@@ -40,6 +41,10 @@ vi.mock("@/lib/generate-utils", () => ({
   extractErrorMessage: mockExtractError,
 }));
 
+vi.mock("@/lib/character-ref-utils", () => ({
+  extractCharacterReferencePortrait: mockExtractPortrait,
+}));
+
 vi.mock("@/lib/ai/ai-sdk", () => ({
   createLanguageModel: vi.fn(),
   extractJSON: vi.fn(),
@@ -55,6 +60,8 @@ const MOCK_CHARACTER = {
   visualHint: "",
   referenceImage: null,
   referenceImageHistory: "[]",
+  referenceImageSingle: null,
+  referenceLayout: null,
   scope: "main" as const,
   performanceStyle: "",
   heightCm: 180,
@@ -111,13 +118,13 @@ describe("handleSingleCharacterImage", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ characterId: "char-1", imagePath: "characters/char-1-default.png", status: "ok", staleShots: 0 });
+    expect(body).toMatchObject({ characterId: "char-1", imagePath: "characters/char-1-default.png", status: "ok", staleShots: 0, referenceLayout: "four-view" });
 
     expect(mockDetectFamily).toHaveBeenCalledWith("comfyui", "hidream_o1_image_mxfp8.safetensors");
     expect(mockResolvePrompt).toHaveBeenCalledWith(
       "character_image_hidream_o1",
       { userId: "user-1", projectId: "proj-1" },
-      { characterName: "英雄", description: "一位勇敢的战士，穿着红色铠甲" }
+      { characterName: "英雄", description: "一位勇敢的战士，穿着红色铠甲", referenceLayout: "four-view" }
     );
     expect(mockGenerateImage).toHaveBeenCalledWith(
       "a brave warrior in red armor",
@@ -130,6 +137,8 @@ describe("handleSingleCharacterImage", () => {
     );
     expect(mockUpdateSet).toHaveBeenCalledWith({
       referenceImage: "characters/char-1-default.png",
+      referenceImageSingle: null,
+      referenceLayout: "four-view",
       referenceImageHistory: expect.stringContaining("characters/char-1-default.png"),
     });
   });
@@ -170,7 +179,7 @@ describe("handleSingleCharacterImage", () => {
 
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body).toEqual({ characterId: "char-1", status: "error", error: "Generation failed: test error" });
+    expect(body).toMatchObject({ characterId: "char-1", status: "error", error: "Generation failed: test error" });
   });
 
   it("marks stale shots when character name appears in shot referenceImages", async () => {
