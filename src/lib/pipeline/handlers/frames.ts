@@ -61,14 +61,14 @@ function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
 }
 
-function supportsKeyframeMultiReference(modelConfig?: ModelConfig) {
-  const image = modelConfig?.image;
-  if (!image) return false;
-  return image.protocol === "hidream" || image.modelId.toLowerCase().includes("hidream");
-}
-
-function getKeyframeReferenceInputs(referenceImages: string[], referenceLabels: string[], allowMultiReference = false) {
-  if (allowMultiReference || referenceImages.length <= 1) {
+function getKeyframeReferenceInputs(referenceImages: string[], referenceLabels: string[]) {
+  // Keyframe generation never passes multi-character reference images to the
+  // image model. Even models that support multi-reference (e.g. HiDream-O1)
+  // reproduce contact-sheet / character-duplication artifacts when given 2+
+  // character reference images simultaneously, and treat the 4-view character
+  // sheets as a layout to replicate. Text descriptions are more reliable for
+  // multi-character scenes; image refs are only kept for 1-character shots.
+  if (referenceImages.length <= 1) {
     return { referenceImages, referenceLabels };
   }
   return { referenceImages: undefined, referenceLabels: undefined };
@@ -176,7 +176,6 @@ export async function handleBatchFrameGenerate(
     .join("\n");
 
   const charsWithImages = frameCharacters.filter((c) => c.referenceImage);
-  const allowKeyframeMultiReference = supportsKeyframeMultiReference(modelConfig);
 
   const ai = resolveImageProvider(modelConfig, versionedUploadDir);
   const results: Array<{
@@ -264,7 +263,6 @@ export async function handleBatchFrameGenerate(
       const keyframeReferenceInputs = getKeyframeReferenceInputs(
         shotCharRefImages,
         shotCharRefLabels,
-        allowKeyframeMultiReference,
       );
       const hasKeyframeImageReferences = (keyframeReferenceInputs.referenceImages?.length ?? 0) > 0;
       const shotCharsForPersist = filteredChars.length > 0 ? filteredChars.map((c) => c.name) : undefined;
@@ -483,7 +481,6 @@ export async function handleSingleFrameGenerate(
   const keyframeReferenceInputs = getKeyframeReferenceInputs(
     shotCharRefImages,
     shotCharRefLabels,
-    supportsKeyframeMultiReference(modelConfig),
   );
   const hasKeyframeImageReferences = (keyframeReferenceInputs.referenceImages?.length ?? 0) > 0;
   const shotCharDescriptions = filteredChars.length > 0

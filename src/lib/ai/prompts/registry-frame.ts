@@ -30,7 +30,29 @@ export const SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT = [
   "frame border",
   "divider lines",
   "white background reference sheet",
+  "duplicate characters",
+  "cloned character",
+  "twin characters",
+  "two of the same person",
+  "two heads one body",
+  "merged bodies",
+  "split body",
+  "fused faces",
+  "extra limb",
+  "missing limb",
 ].join(", ");
+
+const MULTI_CHARACTER_RENDERING_RULES = `=== 多角色精确渲染（最高优先级）===
+当 characterDescriptions 列出 N 位不同角色时，画面中必须**恰好出现 N 位角色**，每位角色各出现一次。
+
+强制约束：
+- 严禁复制、克隆、变形同一位角色（同一张脸出现两次、出现扭曲/拼接的版本、两个身体共享一张脸）
+- 严禁少画或多画角色——N 个角色描述 = N 个角色实体
+- 严禁把多位角色画成同一个人
+- 每位角色的位置、姿态、服装、面部特征必须与 characterDescriptions 中该角色名的描述精确对应
+- 角色之间的空间关系（前后景、左右站位）应符合场景描述
+- 物种锁定：兔子必须是兔子头脸和长耳朵，乌龟必须是乌龟头脸和龟壳，松鼠必须有蓬松大尾巴；动物角色不能画成人形
+- 如果出现多于 N 个角色或角色重复，立即减少到 N 个并修正变形`;
 
 const FIRST_FRAME_STYLE_MATCHING = `=== 关键：画风匹配（最高优先级）===
 仔细阅读下方的角色描述和场景描述。它们指定或暗示了画风。
@@ -56,17 +78,17 @@ ${artStyleBlock()}
 
 ${physicsRealismBlock()}`;
 
-const FIRST_FRAME_REFERENCE_RULES = `=== 参考图（角色设定图）===
-每张附带的参考图是一张角色设定图，展示4个视角（正面、四分之三侧面、侧面、背面）。
-角色的名字印在每张设定图底部——用它来识别对应的角色。
-这些参考图不是构图模板，不是输出版式，不是要复刻的画面布局。
+const FIRST_FRAME_REFERENCE_RULES = `=== 参考图（角色形象参考）===
+每张附带的参考图是**某一位角色的一张形象参考照**——只显示这一个角色的一张肖像或全身立绘，不含分格、不含多视角、不含文字标签。
+这些参考图是**身份、外貌、服装、配饰和画风**的信息源，**不是构图模板、不是输出版式、不是要复刻的画面布局**。
 强制一致性规则：
-- 将设定图中的角色名与场景描述中的角色名对应
+- 将参考图中的角色形象与场景描述中的角色名对应
 - 服装必须与参考图完全一致——相同的衣物类型、颜色、材质、配饰。不要替换（如不要把青色常服换成龙袍）
 - 面孔、发型、发色、体型、肤色必须精确匹配
 - 参考图中展示的所有配饰（帽子、佩刀、发簪、首饰）必须出现
 - 画风必须与参考图精确匹配
-- 忽略设定图的白色背景、四视图网格、底部名字和任何缩略图排版`;
+- **绝不要复制参考图的版式、构图或分格布局——输出一张电影单帧画面**
+- **画面中只出现剧本描述中列出的角色，每位角色恰好出现一次，绝不重复或变形**`;
 
 const FIRST_FRAME_RENDERING_QUALITY = `=== 渲染 ===
 材质：符合画风的丰富细节
@@ -94,6 +116,7 @@ export const frameGenerateFirstDef: PromptDefinition = {
   category: "frame",
   slots: [
     slot("single_frame_layout", SINGLE_FRAME_LAYOUT_CONTRACT, true),
+    slot("multi_character_rules", MULTI_CHARACTER_RENDERING_RULES, true),
     slot("style_matching", FIRST_FRAME_STYLE_MATCHING, true),
     slot("reference_rules", FIRST_FRAME_REFERENCE_RULES, true),
     slot("rendering_quality", FIRST_FRAME_RENDERING_QUALITY, true),
@@ -117,6 +140,8 @@ export const frameGenerateFirstDef: PromptDefinition = {
     lines.push(`生成此镜头的首帧，作为一张高质量图像。`);
     lines.push("");
     lines.push(r("single_frame_layout"));
+    lines.push("");
+    lines.push(r("multi_character_rules"));
     lines.push("");
     lines.push(hasCharacterImageReferences ? r("style_matching") : FIRST_FRAME_TEXT_ONLY_STYLE_MATCHING);
     lines.push("");
@@ -182,6 +207,7 @@ export const frameGenerateLastDef: PromptDefinition = {
   category: "frame",
   slots: [
     slot("single_frame_layout", SINGLE_FRAME_LAYOUT_CONTRACT, true),
+    slot("multi_character_rules", MULTI_CHARACTER_RENDERING_RULES, true),
     slot("style_matching", LAST_FRAME_STYLE_MATCHING, true),
     slot("relationship_to_first", LAST_FRAME_RELATIONSHIP_TO_FIRST, true),
     slot("next_shot_readiness", LAST_FRAME_NEXT_SHOT_READINESS, true),
@@ -204,6 +230,8 @@ export const frameGenerateLastDef: PromptDefinition = {
     lines.push("");
     lines.push(r("single_frame_layout"));
     lines.push("");
+    lines.push(r("multi_character_rules"));
+    lines.push("");
     lines.push(r("style_matching"));
     lines.push("");
     lines.push(`=== 场景环境 ===`);
@@ -220,9 +248,9 @@ export const frameGenerateLastDef: PromptDefinition = {
     lines.push(`=== 参考图 ===`);
     lines.push(`第一张附带图像是此镜头的首帧——以它为视觉锚点。`);
     if (hasCharacterImageReferences) {
-      lines.push(`其余附带图像是角色设定图（每张4个视角，名字印在底部）。`);
-      lines.push(`将每张设定图的角色名与场景中的角色对应。`);
-      lines.push(`参考图只提供身份、外貌、服装、配饰和画风信息；输出必须重新构图为同一个电影场景镜头。`);
+      lines.push(`其余附带图像是**单个角色的形象参考照**——每张只显示一位角色的一张肖像或全身立绘，不含分格、不含多视角、不含文字标签。`);
+      lines.push(`将每张参考图的角色与场景描述中的角色名对应。`);
+      lines.push(`参考图只提供身份、外貌、服装、配饰和画风信息；输出必须重新构图为同一个电影场景镜头，**绝不复制参考图的分格或多视角版式**。`);
     } else {
       lines.push(`角色身份、外貌、服装、配饰和画风以文字角色描述为准。所有角色必须自然处在同一个电影场景镜头里。`);
     }

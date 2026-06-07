@@ -17,6 +17,9 @@ describe("frame generation prompt definitions", () => {
     expect(SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT).toContain("collage");
     expect(SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT).toContain("thumbnail grid");
     expect(SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT).toContain("character reference sheet");
+    expect(SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT).toContain("duplicate characters");
+    expect(SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT).toContain("cloned character");
+    expect(SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT).toContain("twin characters");
     expect(prompt).not.toContain("联系表");
     expect(prompt).not.toContain("拼贴图");
     expect(prompt).not.toContain("缩略图行");
@@ -66,4 +69,30 @@ describe("frame generation prompt definitions", () => {
     expect(prompt).not.toContain("每张4个视角");
     expect(prompt).not.toContain("名字印在底部");
   });
+
+  it("enforces the multi-character count contract on first frames", () => {
+    const prompt = frameGenerateFirstDef.buildFullPrompt({}, {
+      sceneDescription: "A forest race field",
+      startFrameDesc: "Rabbit and turtle stand on the starting line",
+      characterDescriptions: "Rabbit: white fur, red vest. Turtle: green shell, straw hat.",
+    });
+
+    expect(prompt).toContain("多角色精确渲染");
+    expect(prompt).toContain("恰好出现 N 位角色");
+    expect(prompt).toContain("严禁复制、克隆、变形同一位角色");
+    expect(prompt).toContain("N 个角色描述 = N 个角色实体");
+  });
+
+  it("enforces the multi-character count contract on last frames", () => {
+    const prompt = frameGenerateLastDef.buildFullPrompt({}, {
+      sceneDescription: "A forest race field",
+      endFrameDesc: "Rabbit and turtle face the track",
+      characterDescriptions: "Rabbit: white fur, red vest. Turtle: green shell, straw hat.",
+    });
+
+    expect(prompt).toContain("多角色精确渲染");
+    expect(prompt).toContain("恰好出现 N 位角色");
+    expect(prompt).toContain("物种锁定");
+  });
 });
+
