@@ -37,7 +37,7 @@ Every new session MUST:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **AIComicBuilder-main** (5711 symbols, 10209 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **AIComicBuilder** (6038 symbols, 10994 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -55,18 +55,15 @@ This project is indexed by GitNexus as **AIComicBuilder-main** (5711 symbols, 10
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
 - NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-- NEVER run `npm install` — use `pnpm install --frozen-lockfile`.
-- NEVER commit `.env` files or secrets.
-- NEVER skip the feedback loop (completion criteria) before declaring a task done.
 
 ## Resources
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/AIComicBuilder-main/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/AIComicBuilder-main/clusters` | All functional areas |
-| `gitnexus://repo/AIComicBuilder-main/processes` | All execution flows |
-| `gitnexus://repo/AIComicBuilder-main/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/AIComicBuilder/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/AIComicBuilder/clusters` | All functional areas |
+| `gitnexus://repo/AIComicBuilder/processes` | All execution flows |
+| `gitnexus://repo/AIComicBuilder/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 

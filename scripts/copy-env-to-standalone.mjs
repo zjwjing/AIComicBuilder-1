@@ -54,3 +54,11 @@ if (fs.existsSync(dataSrc)) {
 } else {
   console.log(`[postbuild] data/ not found — will be created fresh by migrations`);
 }
+
+/* ── 4. Copy workflow templates for ComfyUI providers ── */
+const workflowsSrc = path.resolve("src/lib/ai/providers/workflows");
+const workflowsDest = path.join(STANDALONE_DIR, "src/lib/ai/providers/workflows");
+if (fs.existsSync(workflowsSrc)) {
+  fs.cpSync(workflowsSrc, workflowsDest, { recursive: true, force: true });
+  console.log(`[postbuild] Copied workflows/ → ${workflowsDest}`);
+}

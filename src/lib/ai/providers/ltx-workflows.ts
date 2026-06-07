@@ -1,6 +1,6 @@
 import type { SigmaPreset, CameraControl } from "../types";
 
-const NEGATIVE_PROMPT = "裸露，低胸，透视，紧身过度，暧昧姿势，魅惑表情，擦边，低俗，成人向，暴露肌肤，走光，贴身慵懒，私密场景，色情画风，夸张肢体变形，不健康构图，多肢体，nsfw, nude, sexual, porn, erotic, adult, explicit, violence, gore, horror, deformed, bad anatomy, ugly, worst quality, watermark, text, subtitle, signature, logo, genitalia, breasts, nipples, vagina, penis, buttocks, naked, undressed, see-through, cleavage, lingerie, intimate, provocative, seductive";
+const NEGATIVE_PROMPT = "裸露，低胸，透视，紧身过度，暧昧姿势，魅惑表情，擦边，低俗，成人向，暴露肌肤，走光，贴身慵懒，私密场景，色情画风，夸张肢体变形，不健康构图，多肢体，nsfw, nude, sexual, porn, erotic, adult, explicit, pc game, console game, video game, cartoon, childish, ugly, violence, gore, horror, deformed, bad anatomy, worst quality, 文字，水印，字幕，text, subtitles, captions, burned-in text, overlay text, watermark, logo, signature, numbers, letters, blurry text, garbage characters, unreadable symbols, genitalia, breasts, nipples, vagina, penis, buttocks, naked, undressed, see-through, cleavage, lingerie, intimate, provocative, seductive";
 
 function randomSeed(): number {
   return Math.floor(Math.random() * 1_000_000_000_000_000);
@@ -59,7 +59,7 @@ function addCameraLoRANode(
   modelNodeId: string,
   cameraLoraName: string,
   cameraNodeId: string,
-  cfgGuiderIds: string[],
+  downstreamNodeIds: string[],
 ): void {
   const cameraNode = {
     class_type: "LoraLoaderModelOnly",
@@ -71,10 +71,10 @@ function addCameraLoRANode(
   };
   workflow[cameraNodeId] = cameraNode;
 
-  for (const guiderId of cfgGuiderIds) {
-    const guider = workflow[guiderId] as { inputs: Record<string, unknown> } | undefined;
-    if (guider) {
-      guider.inputs.model = [cameraNodeId, 0];
+  for (const nodeId of downstreamNodeIds) {
+    const node = workflow[nodeId] as { inputs: Record<string, unknown> } | undefined;
+    if (node) {
+      node.inputs.model = [cameraNodeId, 0];
     }
   }
 }
@@ -147,7 +147,7 @@ export function buildLTXi2vT2vWorkflow(
       class_type: "CFGGuider",
       inputs: {
         cfg: 1,
-        model: ["320:285", 0],
+        model: ["320:329", 0],
         positive: ["320:284", 0],
         negative: ["320:284", 1],
       },
@@ -175,7 +175,40 @@ export function buildLTXi2vT2vWorkflow(
       inputs: {
         lora_name: "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
         strength_model: 0.5,
+        model: ["320:328", 0],
+      },
+    },
+    "320:326": {
+      class_type: "LoraLoaderModelOnly",
+      inputs: {
+        lora_name: "Singularity-LTX-2.3_OmniCine_V1.safetensors",
+        strength_model: 1.0,
         model: ["320:316", 0],
+      },
+    },
+    "320:327": {
+      class_type: "LoraLoaderModelOnly",
+      inputs: {
+        lora_name: "ltx2.3-ic-subtitles-remove-general.safetensors",
+        strength_model: 1.0,
+        model: ["320:326", 0],
+      },
+    },
+    "320:328": {
+      class_type: "LoraLoaderModelOnly",
+      inputs: {
+        lora_name: "ltx2.3-video-restoration-general.safetensors",
+        strength_model: 1.0,
+        model: ["320:327", 0],
+      },
+    },
+    "320:329": {
+      class_type: "NAGuidance",
+      inputs: {
+        nag_scale: 5,
+        nag_alpha: 0.5,
+        nag_tau: 1.5,
+        model: ["320:285", 0],
       },
     },
     "320:286": {
@@ -346,7 +379,7 @@ export function buildLTXi2vT2vWorkflow(
       class_type: "CFGGuider",
       inputs: {
         cfg: 1,
-        model: ["320:285", 0],
+        model: ["320:329", 0],
         positive: ["320:304", 0],
         negative: ["320:304", 1],
       },
@@ -396,7 +429,7 @@ export function buildLTXi2vT2vWorkflow(
   };
 
   if (cameraLoraName) {
-    addCameraLoRANode(workflow, "320:285", cameraLoraName, "320:333", ["320:282", "320:314"]);
+    addCameraLoRANode(workflow, "320:285", cameraLoraName, "320:333", ["320:329"]);
   }
 
   if (isT2v) {

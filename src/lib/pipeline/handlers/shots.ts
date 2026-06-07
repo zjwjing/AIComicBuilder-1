@@ -376,42 +376,54 @@ export async function handleShotSplitStream(
     return splitScriptByScenes(chunk, 1);
   }
 
-  // Process chunks sequentially to avoid parallel long-running requests
-  // hitting upstream proxy timeout limits.
+  // Process chunks (up to 3 in parallel) to reduce total wall-clock time.
   const chunkResults: Array<{ shots: ParsedShot[]; error: string | null }> = [];
-  for (let idx = 0; idx < sceneChunks.length; idx++) {
-    const chunk = sceneChunks[idx];
-    const primaryResult = await generateShotSplitChunk(chunk, `Chunk ${idx + 1}/${sceneChunks.length}`);
-    if (!primaryResult.error) {
-      chunkResults.push(primaryResult);
-      continue;
-    }
+  const CONCURRENCY = 3;
+  for (let start = 0; start < sceneChunks.length; start += CONCURRENCY) {
+    const batch = sceneChunks.slice(start, start + CONCURRENCY);
+    console.log(`[ShotSplit] Processing batch ${Math.floor(start / CONCURRENCY) + 1}/${Math.ceil(sceneChunks.length / CONCURRENCY)} (${batch.length} chunk(s))`);
+    const batchResults = await Promise.allSettled(
+      batch.map((chunk, i) => {
+        const idx = start + i;
+        return generateShotSplitChunk(chunk, `Chunk ${idx + 1}/${sceneChunks.length}`);
+      })
+    );
+    for (let i = 0; i < batchResults.length; i++) {
+      const idx = start + i;
+      const settled = batchResults[i];
+      const primaryResult = settled.status === "fulfilled" ? settled.value : { shots: [], error: `Chunk ${idx + 1}: ${settled.reason instanceof Error ? settled.reason.message : String(settled.reason)}` };
 
-    const singleSceneChunks = splitChunkIntoSingleScenes(chunk);
-    if (singleSceneChunks.length <= 1) {
-      chunkResults.push(primaryResult);
-      continue;
-    }
-
-    console.log(`[ShotSplit] Chunk ${idx + 1}: retrying as ${singleSceneChunks.length} single-scene chunk(s)`);
-    const fallbackShots: ParsedShot[] = [];
-    let fallbackError: string | null = null;
-    for (let subIdx = 0; subIdx < singleSceneChunks.length; subIdx++) {
-      const subResult = await generateShotSplitChunk(
-        singleSceneChunks[subIdx],
-        `Chunk ${idx + 1}.${subIdx + 1}/${singleSceneChunks.length}`
-      );
-      if (subResult.error) {
-        fallbackError = subResult.error;
-        break;
+      if (!primaryResult.error) {
+        chunkResults.push(primaryResult);
+        continue;
       }
-      fallbackShots.push(...subResult.shots);
-    }
 
-    if (fallbackError) {
-      chunkResults.push({ shots: [], error: fallbackError });
-    } else {
-      chunkResults.push({ shots: fallbackShots, error: null });
+      const singleSceneChunks = splitChunkIntoSingleScenes(batch[i]);
+      if (singleSceneChunks.length <= 1) {
+        chunkResults.push(primaryResult);
+        continue;
+      }
+
+      console.log(`[ShotSplit] Chunk ${idx + 1}: retrying as ${singleSceneChunks.length} single-scene chunk(s)`);
+      const fallbackShots: ParsedShot[] = [];
+      let fallbackError: string | null = null;
+      for (let subIdx = 0; subIdx < singleSceneChunks.length; subIdx++) {
+        const subResult = await generateShotSplitChunk(
+          singleSceneChunks[subIdx],
+          `Chunk ${idx + 1}.${subIdx + 1}/${singleSceneChunks.length}`
+        );
+        if (subResult.error) {
+          fallbackError = subResult.error;
+          break;
+        }
+        fallbackShots.push(...subResult.shots);
+      }
+
+      if (fallbackError) {
+        chunkResults.push({ shots: [], error: fallbackError });
+      } else {
+        chunkResults.push({ shots: fallbackShots, error: null });
+      }
     }
   }
 

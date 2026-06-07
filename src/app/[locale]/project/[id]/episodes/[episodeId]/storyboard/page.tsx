@@ -255,7 +255,7 @@ export default function EpisodeStoryboardPage() {
     setSelectedVersionId(null); // derived value will auto-select latest
   }
 
-  async function handleBatchGenerateFrames(overwrite = false) {
+  async function handleBatchGenerateFrames(overwrite = false, chainContinuity = false) {
     if (!project?.id) return;
     if (!imageGuard()) return;
     setGeneratingFramesOverwrite(overwrite);
@@ -271,10 +271,11 @@ export default function EpisodeStoryboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "batch_frame_generate",
-          payload: { ratio: videoRatio, overwrite, versionId: selectedVersionId },
+          payload: { ratio: videoRatio, overwrite, versionId: selectedVersionId, chainContinuity },
           modelConfig: getModelConfig(),
           episodeId: useProjectStore.getState().currentEpisodeId,
         }),
+        timeout: 1_200_000,
       });
       const data = await response.json() as { results: Array<{ shotId?: string; status: string }> };
       const failedIds = (data.results || []).filter((r) => r.status === "error").map((r) => r.shotId!).filter(Boolean);
@@ -634,7 +635,7 @@ export default function EpisodeStoryboardPage() {
       // Step 2b: Generate ref images
       if (needsFrame) await handleBatchGenerateSceneFrames(false);
     } else {
-      if (needsFrame) await handleBatchGenerateFrames(false);
+      if (needsFrame) await handleBatchGenerateFrames(false, true);
     }
     if (needsPrompt) await handleBatchGenerateVideoPrompts();
     if (needsVideo) {

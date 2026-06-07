@@ -25,7 +25,7 @@ export async function resolveGenerationMode(projectId: string, episodeId?: strin
     if (ep?.mode) return ep.mode;
   }
   const [proj] = await db.select({ mode: projects.generationMode }).from(projects).where(eq(projects.id, projectId));
-  return proj?.mode ?? "keyframe";
+  return proj?.mode ?? "4grid";
 }
 
 /** Wrap agent call + validation, returning user-friendly error response on failure */

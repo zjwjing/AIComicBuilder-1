@@ -121,7 +121,7 @@ export class SenseNovaImageProvider implements AIProvider {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(180_000),
+      signal: AbortSignal.timeout(300_000),
     });
 
     if (!res.ok) {

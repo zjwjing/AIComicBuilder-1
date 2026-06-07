@@ -116,7 +116,7 @@ export async function POST(request: Request) {
           { id: "wan-firstlast", name: "Wan 首尾帧视频 (ComfyUI)" },
           { id: "wan-i2v", name: "Wan 图生视频 (ComfyUI)" },
           { id: "ltx-i2v", name: "LTX Video 2.3 图生视频" },
-          { id: "ltx-i2v-pro", name: "LTX Video 2.3 图生视频 Pro (3LoRA双采样)" },
+          { id: "ltx-i2v-pro", name: "LTX Video 2.3 图生视频 Pro (4LoRA+NAG双采样)" },
           { id: "ltx-t2v", name: "LTX Video 2.3 文生视频" },
           { id: "ltx-flf2v", name: "LTX Video 2.3 首尾帧视频" },
           { id: "ltx-4grid", name: "LTX-2.3 四宫格分镜（4图引导+音画同步）" },
@@ -130,6 +130,8 @@ export async function POST(request: Request) {
         models: [
           { id: "z-image-turbo-comfyui", name: "Z-Image Turbo (ComfyUI)" },
           { id: "qwen-edit-dual", name: "Qwen Edit Dual (ComfyUI)" },
+          { id: "ideogram4-comfyui", name: "Ideogram 4.0 (ComfyUI)" },
+          { id: "hidream-o1-comfyui", name: "HiDream-O1 (ComfyUI)" },
         ],
       });
     }

@@ -95,6 +95,7 @@ async function runWithAdvance<T>(fn: () => Promise<T>): Promise<T> {
   // provider uses setTimeout(resolve, 5000) for poll interval
   // we advance in one big jump which covers all poll cycles (or until completion/error)
   const promise = fn();
+  promise.catch(() => {});
   await vi.advanceTimersByTimeAsync(60_000);
   return await promise;
 }

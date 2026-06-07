@@ -18,6 +18,7 @@ import {
   buildFirstFramePrompt,
   buildLastFramePrompt,
 } from "@/lib/ai/prompts/frame-generate";
+import { SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT } from "@/lib/ai/prompts/registry-frame";
 import { buildSceneFramePrompt } from "@/lib/ai/prompts/scene-frame-generate";
 import {
   loadShotLegacyViewsBatch,
@@ -31,15 +32,23 @@ import {
 import { buildPipelineDiagnostic, diagnosticError } from "@/lib/pipeline/diagnostics";
 
 async function appendFrameToCharacterHistory(
-  charRows: Array<{ id: string; referenceImageHistory: string | null }>,
+  charRows: Array<{ id: string; name?: string; referenceImageHistory: string | null }>,
   filePath: string,
+  matchContext?: string,
 ) {
   if (charRows.length === 0) return;
+  const MAX_HISTORY = 20;
   for (const char of charRows) {
+    if (matchContext && char.name && !matchContext.includes(char.name)) {
+      continue;
+    }
     let history: string[] = [];
     try { history = JSON.parse(char.referenceImageHistory || "[]"); } catch {}
     if (!history.includes(filePath)) {
       history.push(filePath);
+      if (history.length > MAX_HISTORY) {
+        history = history.slice(history.length - MAX_HISTORY);
+      }
       await db
         .update(characters)
         .set({ referenceImageHistory: JSON.stringify(history) })
@@ -52,6 +61,19 @@ function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
 }
 
+function supportsKeyframeMultiReference(modelConfig?: ModelConfig) {
+  const image = modelConfig?.image;
+  if (!image) return false;
+  return image.protocol === "hidream" || image.modelId.toLowerCase().includes("hidream");
+}
+
+function getKeyframeReferenceInputs(referenceImages: string[], referenceLabels: string[], allowMultiReference = false) {
+  if (allowMultiReference || referenceImages.length <= 1) {
+    return { referenceImages, referenceLabels };
+  }
+  return { referenceImages: undefined, referenceLabels: undefined };
+}
+
 function buildPanelPrompt(params: {
   panelLabel: string;
   sceneDescription: string;
@@ -59,18 +81,15 @@ function buildPanelPrompt(params: {
   characterDescriptions: string;
 }) {
   return [
-    `生成四宫格分镜中的 ${params.panelLabel}，作为一张高质量图像。`,
+    "电影级动画场景渲染，丰富细节，电影布光，完整环境背景。不要格子边框，不要分格线，不要出现任何文字标签。",
     "",
-    "=== 场景描述 ===",
     params.sceneDescription,
     "",
-    "=== 当前面板画面 ===",
     params.panelDescription,
     "",
-    "=== 角色描述 ===",
     params.characterDescriptions,
     "",
-    "要求：保持同一镜头内的角色、服装、光线、画风和空间连续性；画面应像漫画/分镜的单个 panel，而不是拼贴图。",
+    "保持角色、服装、光线、画风连续性。",
   ].join("\n");
 }
 
@@ -132,6 +151,7 @@ export async function handleBatchFrameGenerate(
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
   const generationMode = await resolveGenerationMode(projectId, episodeId);
   const is4Grid = generationMode === "4grid";
+  const chainContinuity = payload?.chainContinuity === true && !is4Grid;
 
   const versionedUploadDir = batchVersionId
     ? await getVersionedUploadDir(batchVersionId)
@@ -156,6 +176,7 @@ export async function handleBatchFrameGenerate(
     .join("\n");
 
   const charsWithImages = frameCharacters.filter((c) => c.referenceImage);
+  const allowKeyframeMultiReference = supportsKeyframeMultiReference(modelConfig);
 
   const ai = resolveImageProvider(modelConfig, versionedUploadDir);
   const results: Array<{
@@ -170,9 +191,16 @@ export async function handleBatchFrameGenerate(
   }> = [];
 
   const overwrite = payload?.overwrite === true;
+  let firstKeyframeShotNeedsFirstFrame = false;
   const needProcess = allShots.filter((s) => {
     const v = allShotsLegacy.get(s.id);
     if (is4Grid) return overwrite || !v || getPanelFrames(v).length < 4;
+    if (chainContinuity) {
+      const needsLastFrame = overwrite || !v?.lastFrame;
+      const needsFirstFrame = !firstKeyframeShotNeedsFirstFrame && (overwrite || !v?.firstFrame);
+      if (needsFirstFrame) firstKeyframeShotNeedsFirstFrame = true;
+      return needsFirstFrame || needsLastFrame;
+    }
     return overwrite || !v?.firstFrame || !v?.lastFrame;
   });
   const skipCount = allShots.length - needProcess.length;
@@ -186,12 +214,24 @@ export async function handleBatchFrameGenerate(
   // Process shots one at a time to avoid overwhelming local image generators.
   const total = allShots.length;
   let doneCount = 0;
+  let generatedFirstFrameForChain = false;
   console.log(`[BatchFrameGenerate] Starting serial generation: 0/${total}`);
 
   for (const shot of allShots) {
     const shotLegacy = allShotsLegacy.get(shot.id);
+    const isChainFirstFrameSlot = chainContinuity && !generatedFirstFrameForChain;
+    const shouldGenerateFirstFrame = !chainContinuity || (isChainFirstFrameSlot && (overwrite || !shotLegacy?.firstFrame));
+    const hasRequiredFirstFrame = !chainContinuity || !isChainFirstFrameSlot || !!shotLegacy?.firstFrame;
+    const shotComplete = is4Grid
+      ? shotLegacy && getPanelFrames(shotLegacy).length === 4
+      : chainContinuity
+        ? hasRequiredFirstFrame && !!shotLegacy?.lastFrame
+        : !!shotLegacy?.firstFrame && !!shotLegacy?.lastFrame;
 
-    if (!overwrite && (is4Grid ? shotLegacy && getPanelFrames(shotLegacy).length === 4 : shotLegacy?.firstFrame && shotLegacy?.lastFrame)) {
+    if (!overwrite && shotComplete) {
+      if (isChainFirstFrameSlot && shotLegacy?.firstFrame) {
+        generatedFirstFrameForChain = true;
+      }
       doneCount++;
       console.log(`[BatchFrameGenerate] ⊙ shot ${shot.sequence} skipped (${doneCount}/${total})`);
       results.push({
@@ -221,6 +261,12 @@ export async function handleBatchFrameGenerate(
         : charsWithImages).slice(0, 6);
       const shotCharRefImages = filteredChars.map((c) => c.referenceImage!);
       const shotCharRefLabels = filteredChars.map((c) => c.name);
+      const keyframeReferenceInputs = getKeyframeReferenceInputs(
+        shotCharRefImages,
+        shotCharRefLabels,
+        allowKeyframeMultiReference,
+      );
+      const hasKeyframeImageReferences = (keyframeReferenceInputs.referenceImages?.length ?? 0) > 0;
       const shotCharsForPersist = filteredChars.length > 0 ? filteredChars.map((c) => c.name) : undefined;
       const shotCharDescriptions = filteredChars.length > 0
         ? filteredChars.map((c) => `${c.name}: ${c.description}`).join("\n")
@@ -258,7 +304,8 @@ export async function handleBatchFrameGenerate(
           generatedPanels.push(panelPath);
         }
 
-        await appendFrameToCharacterHistory(filteredChars, generatedPanels[0]);
+        const matchText = `${shot.prompt || ""} ${panelInputs[0].description}`;
+        await appendFrameToCharacterHistory(filteredChars, generatedPanels[0], matchText);
         await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shot.id));
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         doneCount++;
@@ -267,51 +314,65 @@ export async function handleBatchFrameGenerate(
         continue;
       }
 
-      // Each shot is independent — generate its own first frame from prompt.
-      const firstPrompt = buildFirstFramePrompt({
-        sceneDescription: shot.prompt || "",
-        startFrameDesc: shotLegacy?.startFrameDesc || shot.prompt || "",
-        characterDescriptions: shotCharDescriptions,
-        slotContents: frameFirstSlots,
-      });
-      const firstFramePath = await ai.generateImage(firstPrompt, {
-        ...imageOpts,
-        quality: DEFAULT_IMAGE_QUALITY,
-        referenceImages: shotCharRefImages,
-        referenceLabels: shotCharRefLabels,
-      });
+      // In chain continuity mode, only the first shot owns an independent
+      // first frame; later first frames come from the previous video's tail.
+      let firstFramePath = shotLegacy?.firstFrame ?? "";
+      if (isChainFirstFrameSlot && firstFramePath && !shouldGenerateFirstFrame) {
+        generatedFirstFrameForChain = true;
+      }
+      if (shouldGenerateFirstFrame) {
+        const firstPrompt = buildFirstFramePrompt({
+          sceneDescription: shot.prompt || "",
+          startFrameDesc: shotLegacy?.startFrameDesc || shot.prompt || "",
+          characterDescriptions: shotCharDescriptions,
+          hasCharacterImageReferences: hasKeyframeImageReferences,
+          slotContents: frameFirstSlots,
+        });
+        firstFramePath = await ai.generateImage(firstPrompt, {
+          ...imageOpts,
+          quality: DEFAULT_IMAGE_QUALITY,
+          negativePrompt: SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT,
+          ...keyframeReferenceInputs,
+        });
+        if (chainContinuity) generatedFirstFrameForChain = true;
+      }
 
       const lastPrompt = buildLastFramePrompt({
         sceneDescription: shot.prompt || "",
         endFrameDesc: shotLegacy?.endFrameDesc || shot.prompt || "",
         characterDescriptions: shotCharDescriptions,
         firstFramePath,
+        hasCharacterImageReferences: hasKeyframeImageReferences,
         slotContents: frameLastSlots,
       });
       const lastFramePath = await ai.generateImage(lastPrompt, {
         ...imageOpts,
         quality: DEFAULT_IMAGE_QUALITY,
-        referenceImages: shotCharRefImages,
-        referenceLabels: shotCharRefLabels,
-        editBaseImage: firstFramePath,
+        negativePrompt: SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT,
+        ...keyframeReferenceInputs,
+        editBaseImage: firstFramePath || undefined,
       });
 
-      await appendFrameToCharacterHistory(filteredChars, firstFramePath);
-      await appendFrameToCharacterHistory(filteredChars, lastFramePath);
+      if (shouldGenerateFirstFrame) {
+        const firstMatchText = `${shot.prompt || ""} ${shotLegacy?.startFrameDesc || ""}`;
+        await appendFrameToCharacterHistory(filteredChars, firstFramePath, firstMatchText);
+      }
 
       await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shot.id));
 
-      if (ffAssetExisting) await patchAsset(ffAssetExisting.id, { fileUrl: firstFramePath, status: "completed" });
-      else
-        await insertAssetVersion({
-          shotId: shot.id,
-          type: "first_frame",
-          sequenceInType: 0,
-          prompt: shotLegacy?.startFrameDesc ?? "",
-          fileUrl: firstFramePath,
-          status: "completed",
-          characters: shotCharsForPersist,
-        });
+      if (shouldGenerateFirstFrame) {
+        if (ffAssetExisting) await patchAsset(ffAssetExisting.id, { fileUrl: firstFramePath, status: "completed" });
+        else
+          await insertAssetVersion({
+            shotId: shot.id,
+            type: "first_frame",
+            sequenceInType: 0,
+            prompt: shotLegacy?.startFrameDesc ?? "",
+            fileUrl: firstFramePath,
+            status: "completed",
+            characters: shotCharsForPersist,
+          });
+      }
       if (lfAssetExisting) await patchAsset(lfAssetExisting.id, { fileUrl: lastFramePath, status: "completed" });
       else
         await insertAssetVersion({
@@ -419,6 +480,12 @@ export async function handleSingleFrameGenerate(
     : projectCharacters.filter((c) => c.referenceImage)).slice(0, 6);
   const shotCharRefImages = filteredChars.map((c) => c.referenceImage as string);
   const shotCharRefLabels = filteredChars.map((c) => c.name);
+  const keyframeReferenceInputs = getKeyframeReferenceInputs(
+    shotCharRefImages,
+    shotCharRefLabels,
+    supportsKeyframeMultiReference(modelConfig),
+  );
+  const hasKeyframeImageReferences = (keyframeReferenceInputs.referenceImages?.length ?? 0) > 0;
   const shotCharDescriptions = filteredChars.length > 0
     ? filteredChars.map((c) => `${c.name}: ${c.description}`).join("\n")
     : allCharDescriptions;
@@ -463,7 +530,8 @@ export async function handleSingleFrameGenerate(
         generatedPanels.push(panelPath);
       }
 
-      await appendFrameToCharacterHistory(filteredChars, generatedPanels[0]);
+      const matchText = `${shot.prompt || ""} ${panelInputs[0].description}`;
+      await appendFrameToCharacterHistory(filteredChars, generatedPanels[0], matchText);
       await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shotId));
       return NextResponse.json({ shotId, panels: generatedPanels, status: "ok" });
     }
@@ -472,13 +540,14 @@ export async function handleSingleFrameGenerate(
       sceneDescription: shot.prompt || "",
       startFrameDesc: startFramePromptText,
       characterDescriptions: shotCharDescriptions,
+      hasCharacterImageReferences: hasKeyframeImageReferences,
       slotContents: frameFirstSlots,
     });
     const firstFramePath = await ai.generateImage(firstPrompt, {
       ...imageOpts,
       quality: DEFAULT_IMAGE_QUALITY,
-      referenceImages: shotCharRefImages,
-      referenceLabels: shotCharRefLabels,
+      negativePrompt: SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT,
+      ...keyframeReferenceInputs,
     });
 
     const lastPrompt = buildLastFramePrompt({
@@ -486,18 +555,19 @@ export async function handleSingleFrameGenerate(
       endFrameDesc: endFramePromptText,
       characterDescriptions: shotCharDescriptions,
       firstFramePath,
+      hasCharacterImageReferences: hasKeyframeImageReferences,
       slotContents: frameLastSlots,
     });
     const lastFramePath = await ai.generateImage(lastPrompt, {
       ...imageOpts,
       quality: DEFAULT_IMAGE_QUALITY,
-      referenceImages: shotCharRefImages,
-      referenceLabels: shotCharRefLabels,
+      negativePrompt: SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT,
+      ...keyframeReferenceInputs,
       editBaseImage: firstFramePath,
     });
 
-    await appendFrameToCharacterHistory(filteredChars, firstFramePath);
-    await appendFrameToCharacterHistory(filteredChars, lastFramePath);
+    const firstMatchText = `${shot.prompt || ""} ${startFramePromptText}`;
+    await appendFrameToCharacterHistory(filteredChars, firstFramePath, firstMatchText);
 
     await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shotId));
 

@@ -19,6 +19,7 @@ import { buildVideoPrompt } from "@/lib/ai/prompts/video-generate";
 import { enhanceVideoPrompt } from "@/lib/ai/prompts/video-enhance";
 import { inferVideoPromptFamily } from "@/lib/ai/video-model-strategy";
 import { buildVisualStyleContext } from "@/lib/visual-style";
+import { extractLastVideoFrame } from "@/lib/video/ffmpeg";
 
 import {
   loadShotLegacyView,
@@ -27,7 +28,6 @@ import {
   type ShotLegacyView,
 } from "@/lib/shot-asset-utils";
 import { diagnosticError } from "@/lib/pipeline/diagnostics";
-import { execSync } from "node:child_process";
 
 function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
@@ -272,12 +272,25 @@ export async function handleBatchVideoGenerate(
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
   const batchGenMode = await resolveGenerationMode(projectId, episodeId);
   const is4Grid = batchGenMode === "4grid";
-  const eligible = allShots.filter((s) => {
-    const v = allShotsLegacy.get(s.id);
-    if (!v || (!overwrite && v.videoUrl)) return false;
-    if (is4Grid) return getPanelFrames(v).length === 4;
-    return !!(v.firstFrame && v.lastFrame);
-  });
+  const eligible: typeof allShots = [];
+  let canUsePreviousVideoTail = false;
+  for (const shot of allShots) {
+    const v = allShotsLegacy.get(shot.id);
+    if (!v || (!overwrite && v.videoUrl)) {
+      canUsePreviousVideoTail = false;
+      continue;
+    }
+    if (is4Grid) {
+      if (getPanelFrames(v).length === 4) eligible.push(shot);
+      continue;
+    }
+    if (v.lastFrame && (v.firstFrame || canUsePreviousVideoTail)) {
+      eligible.push(shot);
+      canUsePreviousVideoTail = true;
+    } else {
+      canUsePreviousVideoTail = false;
+    }
+  }
   if (eligible.length === 0) {
     return NextResponse.json({
       results: [],
@@ -307,9 +320,30 @@ export async function handleBatchVideoGenerate(
     ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, episodeId))
     : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
   const visualStyle = buildVisualStyleContext(scriptSource[0]?.script || "", scriptSource[0]?.idea || "");
+  let propagatedFirstFrame: string | null = null;
+  let propagatedFromShotId: string | null = null;
   for (const shot of eligible) {
       try {
         const shotLegacy = allShotsLegacy.get(shot.id);
+        const firstFrameForVideo = !is4Grid && propagatedFirstFrame
+          ? propagatedFirstFrame
+          : shotLegacy?.firstFrame;
+
+        if (!is4Grid && propagatedFirstFrame) {
+          await insertAssetVersion({
+            shotId: shot.id,
+            type: "first_frame",
+            sequenceInType: 0,
+            prompt: shotLegacy?.startFrameDesc ?? "",
+            fileUrl: propagatedFirstFrame,
+            status: "completed",
+            meta: {
+              source: "previous_video_tail",
+              previousShotId: propagatedFromShotId,
+            },
+          });
+        }
+
         const effectiveDuration = Math.min(shot.duration ?? DEFAULT_SHOT_DURATION, videoMaxDuration);
         const shotDialogues = await db
           .select({ text: dialogues.text, characterId: dialogues.characterId, sequence: dialogues.sequence })
@@ -373,7 +407,7 @@ export async function handleBatchVideoGenerate(
         const result = await videoProvider.generateVideo({
           ...(is4Grid
             ? { initialImage: fourGridRefs![0], firstFrame: undefined, lastFrame: undefined }
-            : { firstFrame: shotLegacy!.firstFrame!, lastFrame: shotLegacy!.lastFrame! }
+            : { firstFrame: firstFrameForVideo!, lastFrame: shotLegacy!.lastFrame! }
           ),
           prompt: videoPrompt,
           duration: effectiveDuration,
@@ -382,6 +416,25 @@ export async function handleBatchVideoGenerate(
         });
 
         const videoPath = result.filePath;
+        if (!is4Grid) {
+          const tailFramePath = await extractLastVideoFrame(videoPath, versionedUploadDir, {
+            prefix: `shot-${shot.sequence}-tail`,
+          });
+          await insertAssetVersion({
+            shotId: shot.id,
+            type: "last_frame",
+            sequenceInType: 0,
+            prompt: shotLegacy?.endFrameDesc ?? "",
+            fileUrl: tailFramePath,
+            status: "completed",
+            meta: {
+              source: "video_tail",
+              videoPath,
+            },
+          });
+          propagatedFirstFrame = tailFramePath;
+          propagatedFromShotId = shot.id;
+        }
 
         await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shot.id));
 
@@ -397,6 +450,8 @@ export async function handleBatchVideoGenerate(
         console.log(`[BatchVideoGenerate] Shot ${shot.sequence} completed`);
         results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", videoUrl: videoPath });
       } catch (err) {
+        propagatedFirstFrame = null;
+        propagatedFromShotId = null;
         console.error(`[BatchVideoGenerate] Error for shot ${shot.sequence}:`, err);
         await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shot.id));
         results.push({

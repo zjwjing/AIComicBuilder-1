@@ -59,6 +59,7 @@ export function CharacterCard({
   useEffect(() => { setEditName(name); }, [name]);
   useEffect(() => { setEditDesc(description); }, [description]);
   useEffect(() => { setEditVisualHint(visualHint ?? ""); }, [visualHint]);
+  useEffect(() => { setLocalImage(null); }, [referenceImage]);
   const [generating, setGenerating] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -66,6 +67,9 @@ export function CharacterCard({
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const imageGuard = useModelGuard("image");
   const isGenerating = generating || (!!batchGenerating && !referenceImage);
+  const [generationKey, setGenerationKey] = useState(0);
+  const [localImage, setLocalImage] = useState<string | null>(null);
+  const displayImage = localImage ?? referenceImage;
 
   function resolveImageRef(ref: ModelRef | null) {
     if (!ref) return null;
@@ -109,6 +113,7 @@ export function CharacterCard({
       toast.error(msg.includes("余额") || msg.includes("quota") || msg.includes("insufficient") ? msg : t("common.generationFailed"));
     }
     setGenerating(false);
+    setGenerationKey((k) => k + 1);
     onUpdate();
   }
 
@@ -145,24 +150,27 @@ export function CharacterCard({
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
-        {referenceImage ? (() => {
+        {referenceImage || localImage ? (() => {
           let history: string[] = [];
           try { history = JSON.parse(referenceImageHistory || "[]"); } catch {}
           if (history.length === 0 && referenceImage) history = [referenceImage];
-          const currentIdx = history.indexOf(referenceImage);
+          const currentIdx = history.indexOf(displayImage ?? "");
           const showArrows = history.length > 1;
           async function switchTo(newPath: string) {
+            setLocalImage(newPath);
+            setGenerationKey((k) => k + 1);
             await apiFetch(`/api/projects/${projectId}/characters/${id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ referenceImage: newPath }),
             });
+            setGenerationKey((k) => k + 1);
             onUpdate();
           }
           return (
             <div className="relative w-full aspect-video overflow-hidden rounded-xl cursor-pointer group" onClick={() => setLightbox(true)}>
               <img
-                src={uploadUrl(referenceImage)}
+                src={`${uploadUrl(displayImage ?? "")}?t=${generationKey}`}
                 alt={name}
                 className="w-full h-full object-cover"
               />
@@ -313,7 +321,7 @@ export function CharacterCard({
             <DialogTitle className="sr-only">{name}</DialogTitle>
             <div className="relative inline-block w-full">
               <img
-                src={uploadUrl(referenceImage)}
+                src={`${uploadUrl(displayImage ?? "")}?t=${generationKey}`}
                 alt={name}
                 className="w-full max-h-[85vh] object-contain rounded-xl"
               />

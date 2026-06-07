@@ -64,6 +64,29 @@ export function getAudioDuration(filePath: string): Promise<number> {
   });
 }
 
+export function extractLastVideoFrame(
+  videoPath: string,
+  outputDir: string,
+  options?: { prefix?: string }
+): Promise<string> {
+  const frameDir = path.resolve(outputDir, "frames");
+  fs.mkdirSync(frameDir, { recursive: true });
+  const safePrefix = (options?.prefix || "video-tail")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const framePath = path.join(frameDir, `${safePrefix || "video-tail"}-${genId()}.png`);
+
+  return new Promise((resolve, reject) => {
+    ffmpeg(path.resolve(videoPath))
+      .inputOptions(["-sseof", "-0.05"])
+      .outputOptions(["-frames:v", "1", "-q:v", "2"])
+      .output(framePath)
+      .on("end", () => resolve(framePath))
+      .on("error", (err) => reject(new Error(`Last frame extraction failed: ${err.message}`)))
+      .run();
+  });
+}
+
 export async function generateTitleCard(
   text: string,
   duration: number,
@@ -501,5 +524,4 @@ export async function assembleVideo(params: AssembleParams): Promise<AssembleRes
     srtPath: srtPath ? path.relative(process.cwd(), srtPath) : undefined,
   };
 }
-
 

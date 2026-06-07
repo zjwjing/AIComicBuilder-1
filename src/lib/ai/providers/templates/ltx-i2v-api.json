@@ -51,7 +51,7 @@
   "320:282": {
     "inputs": {
       "cfg": 1,
-      "model": ["320:285", 0],
+      "model": ["320:329", 0],
       "positive": ["320:284", 0],
       "negative": ["320:284", 1]
     },
@@ -78,14 +78,51 @@
     "class_type": "LTXVCropGuides",
     "_meta": { "title": "LTXV裁剪指导" }
   },
-  "320:285": {
+  "320:326": {
     "inputs": {
-      "lora_name": "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-      "strength_model": 0.5,
+      "lora_name": "Singularity-LTX-2.3_OmniCine_V1.safetensors",
+      "strength_model": 1.0,
       "model": ["320:316", 0]
     },
     "class_type": "LoraLoaderModelOnly",
     "_meta": { "title": "LoRA加载器（仅模型）" }
+  },
+  "320:327": {
+    "inputs": {
+      "lora_name": "ltx2.3-ic-subtitles-remove-general.safetensors",
+      "strength_model": 1.0,
+      "model": ["320:326", 0]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "LoRA加载器（仅模型）" }
+  },
+  "320:328": {
+    "inputs": {
+      "lora_name": "ltx2.3-ic-restoration-general.safetensors",
+      "strength_model": 1.0,
+      "model": ["320:327", 0]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "LoRA加载器（仅模型）" }
+  },
+  "320:285": {
+    "inputs": {
+      "lora_name": "ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.5,
+      "model": ["320:328", 0]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": { "title": "LoRA加载器（仅模型）" }
+  },
+  "320:329": {
+    "inputs": {
+      "nag_scale": 5,
+      "nag_alpha": 0.5,
+      "nag_tau": 1.5,
+      "model": ["320:285", 0]
+    },
+    "class_type": "NAGuidance",
+    "_meta": { "title": "归一化注意力引导" }
   },
   "320:286": {
     "inputs": {
@@ -288,7 +325,7 @@
   "320:314": {
     "inputs": {
       "cfg": 1,
-      "model": ["320:285", 0],
+      "model": ["320:329", 0],
       "positive": ["320:304", 0],
       "negative": ["320:304", 1]
     },

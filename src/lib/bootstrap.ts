@@ -18,6 +18,10 @@ function validateEnv() {
     process.env.COMFYUI_BASE_URL;
   if (!hasImage) warn.push("No image provider configured");
 
+  if (!process.env.AUTH_SECRET) {
+    warn.push("AUTH_SECRET is not set; signed user cookies may fail across runtimes or restarts");
+  }
+
   if (missing.length) {
     console.error("[Bootstrap] Missing critical env vars:", missing.join(", "));
   }

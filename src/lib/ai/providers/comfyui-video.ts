@@ -406,6 +406,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
 
     const cameraLoraName = getCameraLoRAName(cameraControl);
     if (cameraLoraName && n285) {
+      const n329 = inputs("320:329");
       template["320:333"] = {
         class_type: "LoraLoaderModelOnly",
         inputs: {
@@ -414,8 +415,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
           model: ["320:285", 0],
         },
       };
-      if (n282) n282.model = ["320:333", 0];
-      if (n314) n314.model = ["320:333", 0];
+      if (n329) n329.model = ["320:333", 0];
     }
 
     return template;

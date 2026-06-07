@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useCanvasStore } from "@/stores/canvas-store";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import type { Shot } from "@/stores/project-store";
 import { apiFetch } from "@/lib/api-fetch";
@@ -23,8 +24,10 @@ const SUGGESTIONS = [
 
 export function AgentChat({ shot }: AgentChatProps) {
   const params = useParams<{ id: string; episodeId: string }>();
-  const chatMessages = useCanvasStore((s) =>
-    s.selectedShotId ? s.chatMessagesByShotId[s.selectedShotId] ?? [] : []
+  const chatMessages = useCanvasStore(
+    useShallow((s) =>
+      s.selectedShotId ? s.chatMessagesByShotId[s.selectedShotId] ?? [] : []
+    )
   );
   const chatOpen = useCanvasStore((s) => s.chatOpen);
   const chatLoading = useCanvasStore((s) => s.chatLoading);

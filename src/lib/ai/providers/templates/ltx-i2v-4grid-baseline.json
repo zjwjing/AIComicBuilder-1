@@ -286,7 +286,7 @@
     "inputs": {
       "lora_name": "ltx2.3-ic-subtitles-remove-general.safetensors",
       "strength_model": 1.0,
-      "model": ["375", 0]
+      "model": ["376", 0]
     },
     "class_type": "LoraLoaderModelOnly"
   },
@@ -318,6 +318,14 @@
   "375": {
     "inputs": { "ckpt_name": "CKPT_PLACEHOLDER" },
     "class_type": "CheckpointLoaderSimple"
+  },
+  "376": {
+    "inputs": {
+      "lora_name": "Singularity-LTX-2.3_OmniCine_V1.safetensors",
+      "strength_model": 1.0,
+      "model": ["375", 0]
+    },
+    "class_type": "LoraLoaderModelOnly"
   },
   "382": {
     "inputs": {

@@ -2,6 +2,36 @@
 import { artStyleBlock, themeStyleMappingBlock, physicsRealismBlock } from "./blocks";
 // ─── 8. frame_generate_first ────────────────────────────
 
+const SINGLE_FRAME_LAYOUT_CONTRACT = `=== 单帧画面契约（最高优先级）===
+只生成一张完整的电影画面，整个画布只能是一个连续场景。
+最终画面必须铺满整个画布，只有一个取景、一个透视、一套连续的环境光。
+所有角色必须自然处在同一个场景空间里，不能以资料图、预览图或说明图形式出现。
+参考图只用于识别角色身份、外貌、服装、配饰和画风；输出必须重新构图为电影镜头。`;
+
+export const SINGLE_FRAME_LAYOUT_NEGATIVE_PROMPT = [
+  "contact sheet",
+  "collage",
+  "storyboard page",
+  "comic page",
+  "multi panel",
+  "split screen",
+  "thumbnail grid",
+  "character reference sheet",
+  "character turnaround",
+  "model sheet",
+  "UI interface",
+  "game UI",
+  "text labels",
+  "captions",
+  "subtitle",
+  "watermark",
+  "logo",
+  "border",
+  "frame border",
+  "divider lines",
+  "white background reference sheet",
+].join(", ");
+
 const FIRST_FRAME_STYLE_MATCHING = `=== 关键：画风匹配（最高优先级）===
 仔细阅读下方的角色描述和场景描述。它们指定或暗示了画风。
 你必须精确匹配该画风。不要默认使用写实风格。
@@ -14,15 +44,29 @@ ${artStyleBlock()}
 
 ${physicsRealismBlock()}`;
 
+const FIRST_FRAME_TEXT_ONLY_STYLE_MATCHING = `=== 关键：画风和角色外观锁定（最高优先级）===
+仔细阅读下方的角色描述和场景描述。它们指定或暗示了画风。
+你必须精确匹配该画风。不要默认使用写实风格。
+角色外观必须严格遵守文字描述中的物种、体型、脸部特征、发型/毛色、服装、主色、配饰和材质。
+角色必须自然融入同一个电影场景镜头。
+
+${themeStyleMappingBlock()}
+
+${artStyleBlock()}
+
+${physicsRealismBlock()}`;
+
 const FIRST_FRAME_REFERENCE_RULES = `=== 参考图（角色设定图）===
 每张附带的参考图是一张角色设定图，展示4个视角（正面、四分之三侧面、侧面、背面）。
 角色的名字印在每张设定图底部——用它来识别对应的角色。
+这些参考图不是构图模板，不是输出版式，不是要复刻的画面布局。
 强制一致性规则：
 - 将设定图中的角色名与场景描述中的角色名对应
 - 服装必须与参考图完全一致——相同的衣物类型、颜色、材质、配饰。不要替换（如不要把青色常服换成龙袍）
 - 面孔、发型、发色、体型、肤色必须精确匹配
 - 参考图中展示的所有配饰（帽子、佩刀、发簪、首饰）必须出现
-- 画风必须与参考图精确匹配`;
+- 画风必须与参考图精确匹配
+- 忽略设定图的白色背景、四视图网格、底部名字和任何缩略图排版`;
 
 const FIRST_FRAME_RENDERING_QUALITY = `=== 渲染 ===
 材质：符合画风的丰富细节
@@ -30,6 +74,11 @@ const FIRST_FRAME_RENDERING_QUALITY = `=== 渲染 ===
 背景：完整渲染的详细环境。不要空白或抽象背景。
 角色：精确匹配参考图的外貌和画风。表情生动，姿态自然有动感。
 构图：电影级取景，明确的视觉焦点和景深。`;
+
+const CHARACTER_SPECIES_LOCK = `=== 角色物种锁定 ===
+角色描述里的物种是身份的一部分，必须保持不变。
+动物或非人类角色必须保留对应动物的头脸、身体轮廓、皮毛/龟壳/尾巴/耳朵等标志特征；服装和配饰穿戴在该动物身体上。
+例如兔子必须是兔子头脸和长耳朵，乌龟必须是乌龟头脸、绿色皮肤和背部龟壳，小鹿必须有鹿角和鹿脸，松鼠必须有松鼠脸和蓬松大尾巴。`;
 
 const FIRST_FRAME_CONTINUITY_RULES = `=== 连续性要求 ===
 此镜头紧接上一个镜头。附带的参考中包含上一个镜头的尾帧。保持视觉连续性：
@@ -44,6 +93,7 @@ export const frameGenerateFirstDef: PromptDefinition = {
   descriptionKey: "promptTemplates.prompts.frameGenerateFirstDesc",
   category: "frame",
   slots: [
+    slot("single_frame_layout", SINGLE_FRAME_LAYOUT_CONTRACT, true),
     slot("style_matching", FIRST_FRAME_STYLE_MATCHING, true),
     slot("reference_rules", FIRST_FRAME_REFERENCE_RULES, true),
     slot("rendering_quality", FIRST_FRAME_RENDERING_QUALITY, true),
@@ -60,11 +110,15 @@ export const frameGenerateFirstDef: PromptDefinition = {
       (params?.characterDescriptions as string) ?? "";
     const previousLastFrame =
       (params?.previousLastFrame as string) ?? "";
+    const hasCharacterImageReferences =
+      params?.hasCharacterImageReferences !== false;
 
     const lines: string[] = [];
     lines.push(`生成此镜头的首帧，作为一张高质量图像。`);
     lines.push("");
-    lines.push(r("style_matching"));
+    lines.push(r("single_frame_layout"));
+    lines.push("");
+    lines.push(hasCharacterImageReferences ? r("style_matching") : FIRST_FRAME_TEXT_ONLY_STYLE_MATCHING);
     lines.push("");
     lines.push(`=== 场景环境 ===`);
     lines.push(sceneDescription);
@@ -75,8 +129,12 @@ export const frameGenerateFirstDef: PromptDefinition = {
     lines.push(`=== 角色描述 ===`);
     lines.push(characterDescriptions);
     lines.push("");
-    lines.push(r("reference_rules"));
+    lines.push(CHARACTER_SPECIES_LOCK);
     lines.push("");
+    if (hasCharacterImageReferences) {
+      lines.push(r("reference_rules"));
+      lines.push("");
+    }
 
     if (previousLastFrame) {
       lines.push(r("continuity_rules"));
@@ -123,6 +181,7 @@ export const frameGenerateLastDef: PromptDefinition = {
   descriptionKey: "promptTemplates.prompts.frameGenerateLastDesc",
   category: "frame",
   slots: [
+    slot("single_frame_layout", SINGLE_FRAME_LAYOUT_CONTRACT, true),
     slot("style_matching", LAST_FRAME_STYLE_MATCHING, true),
     slot("relationship_to_first", LAST_FRAME_RELATIONSHIP_TO_FIRST, true),
     slot("next_shot_readiness", LAST_FRAME_NEXT_SHOT_READINESS, true),
@@ -137,9 +196,13 @@ export const frameGenerateLastDef: PromptDefinition = {
       (params?.endFrameDesc as string) ?? "";
     const characterDescriptions =
       (params?.characterDescriptions as string) ?? "";
+    const hasCharacterImageReferences =
+      params?.hasCharacterImageReferences !== false;
 
     const lines: string[] = [];
     lines.push(`生成此镜头的尾帧，作为一张高质量图像。`);
+    lines.push("");
+    lines.push(r("single_frame_layout"));
     lines.push("");
     lines.push(r("style_matching"));
     lines.push("");
@@ -152,10 +215,17 @@ export const frameGenerateLastDef: PromptDefinition = {
     lines.push(`=== 角色描述 ===`);
     lines.push(characterDescriptions);
     lines.push("");
+    lines.push(CHARACTER_SPECIES_LOCK);
+    lines.push("");
     lines.push(`=== 参考图 ===`);
     lines.push(`第一张附带图像是此镜头的首帧——以它为视觉锚点。`);
-    lines.push(`其余附带图像是角色设定图（每张4个视角，名字印在底部）。`);
-    lines.push(`将每张设定图的角色名与场景中的角色对应。`);
+    if (hasCharacterImageReferences) {
+      lines.push(`其余附带图像是角色设定图（每张4个视角，名字印在底部）。`);
+      lines.push(`将每张设定图的角色名与场景中的角色对应。`);
+      lines.push(`参考图只提供身份、外貌、服装、配饰和画风信息；输出必须重新构图为同一个电影场景镜头。`);
+    } else {
+      lines.push(`角色身份、外貌、服装、配饰和画风以文字角色描述为准。所有角色必须自然处在同一个电影场景镜头里。`);
+    }
     lines.push("");
     lines.push(r("relationship_to_first"));
     lines.push("");
@@ -214,7 +284,7 @@ export const sceneFrameGenerateDef: PromptDefinition = {
     // actions belong to the video generation step.
 
     const lines: string[] = [];
-    lines.push(`生成一张电影级静帧图像，作为纯场景参考帧。画面中不得出现任何人物。`);
+    lines.push(`生成一张电影级静帧图像，作为纯场景参考帧。画面中不得出现任何人物，不要格子边框，不要漫画分格线，不要出现任何文字标签。`);
     lines.push("");
     lines.push(`=== 场景描述 ===`);
     lines.push(sceneDescription);
