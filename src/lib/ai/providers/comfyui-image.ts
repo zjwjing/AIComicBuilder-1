@@ -70,7 +70,7 @@ export class ComfyUIImageProvider implements AIProvider {
 
   constructor(params?: { baseUrl?: string; model?: string; uploadDir?: string; authToken?: string; authCookie?: string }) {
     this.baseUrl = (params?.baseUrl || process.env.COMFYUI_BASE_URL || "https://2wdf3izjfh-8188.cnb.run/").replace(/\/+$/, "");
-    this.model = params?.model || "z-image-turbo-comfyui";
+    this.model = params?.model || process.env.COMFYUI_MODEL || "hidream-o1-comfyui";
     this.uploadDir = params?.uploadDir || process.env.UPLOAD_DIR || "./uploads";
     this.authToken = params?.authToken || process.env.COMFYUI_AUTH_TOKEN;
     this.authCookie = params?.authCookie || process.env.COMFYUI_AUTH_COOKIE;

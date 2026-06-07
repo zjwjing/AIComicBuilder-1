@@ -36,23 +36,26 @@ describe("ComfyUIImageProvider", () => {
   describe("constructor", () => {
     it("uses default values when no params given", () => {
       vi.stubEnv("COMFYUI_BASE_URL", "");
+      vi.stubEnv("COMFYUI_MODEL", "");
       vi.stubEnv("UPLOAD_DIR", "");
       vi.stubEnv("COMFYUI_AUTH_TOKEN", "");
       vi.stubEnv("COMFYUI_AUTH_COOKIE", "");
       const p = new ComfyUIImageProvider();
       expect((p as any).baseUrl).toBe("https://2wdf3izjfh-8188.cnb.run");
-      expect((p as any).model).toBe("z-image-turbo-comfyui");
+      expect((p as any).model).toBe("hidream-o1-comfyui");
       expect((p as any).uploadDir).toBe("./uploads");
       vi.unstubAllEnvs();
     });
 
     it("uses env vars when params not given", () => {
       vi.stubEnv("COMFYUI_BASE_URL", "http://localhost:8188");
+      vi.stubEnv("COMFYUI_MODEL", "z-image-turbo-comfyui");
       vi.stubEnv("UPLOAD_DIR", "/tmp/uploads");
       vi.stubEnv("COMFYUI_AUTH_TOKEN", "env-token");
       vi.stubEnv("COMFYUI_AUTH_COOKIE", "env-cookie");
       const p = new ComfyUIImageProvider();
       expect((p as any).baseUrl).toBe("http://localhost:8188");
+      expect((p as any).model).toBe("z-image-turbo-comfyui");
       expect((p as any).uploadDir).toBe("/tmp/uploads");
       expect((p as any).authToken).toBe("env-token");
       expect((p as any).authCookie).toBe("env-cookie");
@@ -61,12 +64,15 @@ describe("ComfyUIImageProvider", () => {
 
     it("uses constructor params over env vars", () => {
       vi.stubEnv("COMFYUI_BASE_URL", "http://env:8188");
+      vi.stubEnv("COMFYUI_MODEL", "env-model");
       vi.stubEnv("COMFYUI_AUTH_TOKEN", "env-token");
       const p = new ComfyUIImageProvider({
         baseUrl: "http://param:8188",
+        model: "param-model",
         authToken: "param-token",
       });
       expect((p as any).baseUrl).toBe("http://param:8188");
+      expect((p as any).model).toBe("param-model");
       expect((p as any).authToken).toBe("param-token");
       vi.unstubAllEnvs();
     });
@@ -410,7 +416,7 @@ describe("ComfyUIImageProvider", () => {
         .mockResolvedValueOnce(historyResponse)
         .mockResolvedValueOnce(viewResponse);
 
-      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188" });
+      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188", model: "z-image-turbo-comfyui" });
       const result = await p.generateImage("a cat");
 
       expect(result).toContain("mock-id-123");
@@ -440,7 +446,7 @@ describe("ComfyUIImageProvider", () => {
         text: vi.fn().mockResolvedValue("Internal error"),
       });
 
-      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188" });
+      const p = new ComfyUIImageProvider({ baseUrl: "http://localhost:8188", model: "z-image-turbo-comfyui" });
       await expect(p.generateImage("a cat")).rejects.toThrow(
         "ComfyUI image prompt submit failed: 500 Internal error",
       );
