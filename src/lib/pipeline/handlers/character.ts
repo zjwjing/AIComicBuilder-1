@@ -33,6 +33,16 @@ function readLayoutFromPayload(
   return undefined;
 }
 
+function parseReferenceImageHistory(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function layoutFromCharacter(
   character: { referenceLayout: string | null },
 ): CharacterReferenceLayout {
@@ -297,12 +307,9 @@ export async function handleSingleCharacterImage(
   if (character.referenceImage && !refImages.includes(character.referenceImage)) {
     refImages.push(character.referenceImage);
   }
-  try {
-    const history = JSON.parse(character.referenceImageHistory || "[]") as string[];
-    for (const img of history) {
-      if (!refImages.includes(img)) refImages.push(img);
-    }
-  } catch {}
+  for (const img of parseReferenceImageHistory(character.referenceImageHistory)) {
+    if (!refImages.includes(img)) refImages.push(img);
+  }
   // Limit to 10 to avoid overloading
   const subjectRefs = refImages.slice(0, 10);
 
@@ -316,10 +323,7 @@ export async function handleSingleCharacterImage(
     });
 
     // Append to history
-    let history: string[] = [];
-    try {
-      history = JSON.parse(character.referenceImageHistory || "[]");
-    } catch {}
+    const history = parseReferenceImageHistory(character.referenceImageHistory);
     if (character.referenceImage && !history.includes(character.referenceImage)) {
       history.push(character.referenceImage);
     }
@@ -464,12 +468,9 @@ export async function handleBatchCharacterImage(
       if (character.referenceImage && !refImages.includes(character.referenceImage)) {
         refImages.push(character.referenceImage);
       }
-      try {
-        const history = JSON.parse(character.referenceImageHistory || "[]") as string[];
-        for (const img of history) {
-          if (!refImages.includes(img)) refImages.push(img);
-        }
-      } catch {}
+      for (const img of parseReferenceImageHistory(character.referenceImageHistory)) {
+        if (!refImages.includes(img)) refImages.push(img);
+      }
       const subjectRefs = refImages.slice(0, 10);
 
       const imagePath = await ai.generateImage(prompt, {
@@ -481,8 +482,7 @@ export async function handleBatchCharacterImage(
       });
 
       // Append to history
-      let history: string[] = [];
-      try { history = JSON.parse(character.referenceImageHistory || "[]"); } catch {}
+      const history = parseReferenceImageHistory(character.referenceImageHistory);
       if (character.referenceImage && !history.includes(character.referenceImage)) history.push(character.referenceImage);
       if (!history.includes(imagePath)) history.push(imagePath);
 

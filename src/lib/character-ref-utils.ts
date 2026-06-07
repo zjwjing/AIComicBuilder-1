@@ -36,6 +36,15 @@ export interface CharacterReferencePortraitResult {
  * not always honor the requested layout exactly. The front view is taken
  * from the top-left cell after applying a small white-border margin.
  *
+ * KNOWN LIMITATION: we assume the front view is the top-left (or leftmost
+ * in a horizontal strip, top in a vertical strip) cell. The current
+ * character-image prompts all instruct the model to place the front view
+ * there, but the model is not 100% reliable. If a future refactor wants
+ * to be model-agnostic, either (a) re-prompt with stronger cell-position
+ * anchoring, (b) use CLIP/face-detection to locate the front view
+ * post-hoc, or (c) accept a `frontCellIndex` parameter so the caller can
+ * override the assumption.
+ *
  * Returns a path relative to the upload dir. Returns null when the input
  * is already a single portrait.
  */
