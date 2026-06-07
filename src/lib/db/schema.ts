@@ -70,6 +70,12 @@ export const characters = sqliteTable("characters", {
   visualHint: text("visual_hint").default(""),
   referenceImage: text("reference_image"),
   referenceImageHistory: text("reference_image_history").default("[]"),
+  referenceImageSingle: text("reference_image_single"),
+  referenceLayout: text("reference_layout", {
+    enum: ["single", "three-view", "four-view"],
+  })
+    .notNull()
+    .default("four-view"),
   scope: text("scope", { enum: ["main", "guest"] }).notNull().default("main"),
   performanceStyle: text("performance_style").default(""),
   heightCm: integer("height_cm").default(0),
