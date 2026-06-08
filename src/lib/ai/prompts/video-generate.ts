@@ -82,6 +82,7 @@ export function buildReferenceVideoPrompt(params: {
   visualStyle?: string;
   family?: "ltx" | "wan" | "seedance" | "generic";
   slotContents?: Record<string, string>;
+  previousShotSummary?: string;
 }): string {
   const lang = detectLanguage(params.videoScript);
   const L = getLabels(lang);
@@ -90,6 +91,16 @@ export function buildReferenceVideoPrompt(params: {
   if (params.duration) {
     const capped = Math.min(params.duration, 15);
     lines.push(`${L.duration}${L.colon}${capped}s${L.period}`);
+    lines.push(``);
+  }
+
+  if (params.previousShotSummary) {
+    const hook = resolveSlot(params.slotContents, "ref_video_generate", "continuity_hook", "");
+    if (hook.includes("[描述]")) {
+      lines.push(hook.replace("[描述]", params.previousShotSummary));
+    } else {
+      lines.push(`${lang === "zh" ? "前情" : "Previous shot"}${L.colon}${params.previousShotSummary}${L.period}`);
+    }
     lines.push(``);
   }
 
@@ -228,7 +239,12 @@ export function buildVideoPrompt(params: {
   }
 
   if (params.previousShotSummary) {
-    lines.push(`${lang === "zh" ? "前情" : "Previous shot"}${L.colon}${params.previousShotSummary}${L.period}`);
+    const hook = resolveSlot(params.slotContents, "video_generate", "continuity_hook", "");
+    if (hook.includes("[描述]")) {
+      lines.push(hook.replace("[描述]", params.previousShotSummary));
+    } else {
+      lines.push(`${lang === "zh" ? "前情" : "Previous shot"}${L.colon}${params.previousShotSummary}${L.period}`);
+    }
     lines.push(``);
   }
 

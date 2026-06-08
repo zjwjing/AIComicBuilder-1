@@ -6,6 +6,8 @@ const VIDEO_QUALITY_ANCHOR = `(volumetric lighting:1.25), (cinematic film grain:
 
 const VIDEO_NEGATIVE_PROMPT = `水印、字幕、文字 LOGO、标识、时间码、画面边框、模糊、抖动、变形、多余肢体、重复人脸、画面闪烁、字幕条、台标、穿帮镜头`;
 
+const VIDEO_CONTINUITY_HOOK = `上一镜结束时：[描述]。本镜从该状态自然衔接，时间、空间、情绪保持连续。`;
+
 const VIDEO_INTERPOLATION_HEADER = `用自然中文散文描述从首帧到尾帧之间发生的动态过程。优先使用 (keyword:权重) 语法强化关键元素（如 (角色名:1.3)、(关键动作:1.2)）。把镜头当一段电影画面来写，语言要让模型"看见"。
 
 写作要点（Seedance 2.0 风格）：
@@ -51,6 +53,7 @@ export const videoGenerateDef: PromptDefinition = {
   slots: [
     slot("quality_anchor", VIDEO_QUALITY_ANCHOR, true),
     slot("interpolation_header", VIDEO_INTERPOLATION_HEADER, true),
+    slot("continuity_hook", VIDEO_CONTINUITY_HOOK, true),
     slot("dialogue_format", VIDEO_DIALOGUE_FORMAT, true),
     slot("frame_anchors", VIDEO_FRAME_ANCHORS, true),
     slot("negative_prompt", VIDEO_NEGATIVE_PROMPT, true),
@@ -60,6 +63,8 @@ export const videoGenerateDef: PromptDefinition = {
     const r = (k: string) => resolve(sc, s, k);
     return [
       r("quality_anchor"),
+      "",
+      r("continuity_hook"),
       "",
       r("interpolation_header"),
       "",
@@ -101,8 +106,9 @@ export const refVideoGenerateDef: PromptDefinition = {
   nameKey: "promptTemplates.prompts.refVideoGenerate",
   descriptionKey: "promptTemplates.prompts.refVideoGenerateDesc",
   category: "video",
-  slots: [
+slots: [
     slot("quality_anchor", VIDEO_QUALITY_ANCHOR, true),
+    slot("continuity_hook", VIDEO_CONTINUITY_HOOK, true),
     slot("consistency_rules", REF_VIDEO_CONSISTENCY_RULES, true),
     slot("duration_strategy", REF_VIDEO_DURATION_STRATEGY, true),
     slot("dialogue_format", VIDEO_DIALOGUE_FORMAT, true),
@@ -113,6 +119,8 @@ export const refVideoGenerateDef: PromptDefinition = {
     const r = (k: string) => resolve(sc, s, k);
     return [
       r("quality_anchor"),
+      "",
+      r("continuity_hook"),
       "",
       r("consistency_rules"),
       "",
