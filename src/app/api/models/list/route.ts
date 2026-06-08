@@ -167,6 +167,32 @@ export async function POST(request: Request) {
       });
     }
 
+    if (body.protocol === "nvidia-nim" && body.capability === "video") {
+      return NextResponse.json({
+        models: [
+          { id: "nvidia/cosmos-1-0-7b-text2world", name: "Cosmos-1.0 7B Text2World" },
+          { id: "nvidia/cosmos-1-0-14b-text2world", name: "Cosmos-1.0 14B Text2World" },
+          { id: "nvidia/cosmos-1-0-7b-video2world", name: "Cosmos-1.0 7B Video2World" },
+          { id: "nvidia/cosmos-1-0-14b-video2world", name: "Cosmos-1.0 14B Video2World" },
+          { id: "nvidia/cosmos-predict1-7b-text2world", name: "Cosmos-Predict1 7B Text2World" },
+          { id: "nvidia/cosmos-predict1-7b-video2world", name: "Cosmos-Predict1 7B Video2World" },
+          { id: "nvidia/cosmos-predict2-2b-text2world", name: "Cosmos-Predict2 2B Text2World" },
+          { id: "nvidia/cosmos-predict2-14b-text2world", name: "Cosmos-Predict2 14B Text2World" },
+          { id: "nvidia/cosmos-predict2-14b-video2world", name: "Cosmos-Predict2 14B Video2World" },
+          { id: "nvidia/cosmos-transfer2-14b", name: "Cosmos-Transfer2 14B" },
+        ],
+      });
+    }
+
+    if (body.protocol === "nvidia-nim" && body.capability === "image") {
+      return NextResponse.json({
+        models: [
+          { id: "nvidia/cosmos-predict2-2b-text2image", name: "Cosmos-Predict2 2B Text2Image" },
+          { id: "nvidia/cosmos-predict2-14b-text2image", name: "Cosmos-Predict2 14B Text2Image" },
+        ],
+      });
+    }
+
     if (!body.baseUrl) {
       return NextResponse.json({ error: "Base URL is required" }, { status: 400 });
     }

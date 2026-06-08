@@ -760,17 +760,17 @@ describe("ComfyUIImageProvider", () => {
       const submitCall = mockFetch.mock.calls[0];
       expect(submitCall[0]).toBe("http://localhost:8188/prompt");
       const submitBody = JSON.parse(submitCall[1].body);
-      expect(submitBody.prompt["66"].class_type).toBe("UNETLoader");
-      expect(submitBody.prompt["66"].inputs.unet_name).toBe("ernie-image.safetensors");
-      expect(submitBody.prompt["62"].class_type).toBe("CLIPLoader");
-      expect(submitBody.prompt["62"].inputs.clip_name).toBe("ministral-3-3b.safetensors");
-      expect(submitBody.prompt["63"].class_type).toBe("VAELoader");
-      expect(submitBody.prompt["63"].inputs.vae_name).toBe("flux2-vae.safetensors");
-      expect(submitBody.prompt["76"].inputs.text).toBe("a futuristic city skyline");
-      expect(submitBody.prompt["70"].class_type).toBe("KSampler");
-      expect(submitBody.prompt["70"].inputs.steps).toBe(50);
-      expect(submitBody.prompt["70"].inputs.cfg).toBe(4.0);
-      expect(submitBody.prompt["16"].inputs.sampler_name).toBe("euler");
+      expect(submitBody.prompt["88:66"].class_type).toBe("UNETLoader");
+      expect(submitBody.prompt["88:66"].inputs.unet_name).toBe("ernie-image.safetensors");
+      expect(submitBody.prompt["88:62"].class_type).toBe("CLIPLoader");
+      expect(submitBody.prompt["88:62"].inputs.clip_name).toBe("ministral-3-3b.safetensors");
+      expect(submitBody.prompt["88:63"].class_type).toBe("VAELoader");
+      expect(submitBody.prompt["88:63"].inputs.vae_name).toBe("flux2-vae.safetensors");
+      expect(submitBody.prompt["88:78"].inputs.value).toBe("a futuristic city skyline");
+      expect(submitBody.prompt["88:70"].class_type).toBe("KSampler");
+      expect(submitBody.prompt["88:70"].inputs.steps).toBe(20);
+      expect(submitBody.prompt["88:70"].inputs.cfg).toBe(4.0);
+      expect(submitBody.prompt["88:70"].inputs.sampler_name).toBe("euler");
       expect(submitBody.prompt["73"].inputs.filename_prefix).toBe("ernie-image");
     });
 
@@ -817,10 +817,10 @@ describe("ComfyUIImageProvider", () => {
       await p.generateImage("a fast cat");
 
       const submitBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(submitBody.prompt["66"].inputs.unet_name).toBe("ernie-image-turbo.safetensors");
-      expect(submitBody.prompt["70"].inputs.steps).toBe(8);
-      expect(submitBody.prompt["70"].inputs.cfg).toBe(1.0);
-      expect(submitBody.prompt["16"].inputs.sampler_name).toBe("res_multistep");
+      expect(submitBody.prompt["88:66"].inputs.unet_name).toBe("ernie-image-turbo.safetensors");
+      expect(submitBody.prompt["88:70"].inputs.steps).toBe(8);
+      expect(submitBody.prompt["88:70"].inputs.cfg).toBe(1.0);
+      expect(submitBody.prompt["88:70"].inputs.sampler_name).toBe("res_multistep");
       expect(submitBody.prompt["73"].inputs.filename_prefix).toBe("ernie-image-turbo");
     });
 
@@ -864,8 +864,8 @@ describe("ComfyUIImageProvider", () => {
       await p.generateImage("test", { workflowFamily: "ernie-image-comfyui" });
 
       const submitBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(submitBody.prompt["66"].class_type).toBe("UNETLoader");
-      expect(submitBody.prompt["66"].inputs.unet_name).toBe("ernie-image.safetensors");
+      expect(submitBody.prompt["88:66"].class_type).toBe("UNETLoader");
+      expect(submitBody.prompt["88:66"].inputs.unet_name).toBe("ernie-image.safetensors");
     });
   });
 });

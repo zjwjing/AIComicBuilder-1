@@ -5,6 +5,7 @@ import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 import { preflightWorkflow } from "@/lib/comfyui/preflight";
 import { ErrorCodes } from "@/lib/comfyui/errors";
+import { ERNIE_IMAGE_API_PROMPT } from "./_workflows/ernie-image-api";
 
 type ComfyPromptResponse = {
   prompt_id?: string;
@@ -570,11 +571,11 @@ export class ComfyUIImageProvider implements AIProvider {
     const size = ratioToErnieImageSize(options?.aspectRatio);
     const seed = Math.floor(Math.random() * 2_147_483_647);
     const isTurbo = isErnieTurboModel(this.model);
-    const steps = isTurbo ? 8 : 50;
+    const steps = isTurbo ? 8 : 20;
     const cfg = isTurbo ? 1.0 : 4.0;
     const samplerName = isTurbo ? "res_multistep" : "euler";
-    const scheduler = isTurbo ? "simple" : "normal";
-    const diffusionFile = isTurbo
+    const scheduler = isTurbo ? "simple" : "simple";
+    const unetFile = isTurbo
       ? "ernie-image-turbo.safetensors"
       : "ernie-image.safetensors";
     const negativeText = [
@@ -582,63 +583,26 @@ export class ComfyUIImageProvider implements AIProvider {
       options?.negativePrompt,
     ].filter(Boolean).join(", ");
 
-    return {
-      "66": {
-        class_type: "UNETLoader",
-        inputs: { unet_name: diffusionFile, weight_dtype: "default" },
-      },
-      "62": {
-        class_type: "CLIPLoader",
-        inputs: { clip_name: "ministral-3-3b.safetensors", type: "flux2", device: "default" },
-      },
-      "63": {
-        class_type: "VAELoader",
-        inputs: { vae_name: "flux2-vae.safetensors" },
-      },
-      "76": {
-        class_type: "CLIPTextEncode",
-        inputs: { text: prompt, clip: ["62", 0] },
-      },
-      "78": {
-        class_type: "CLIPTextEncode",
-        inputs: { text: negativeText, clip: ["62", 0] },
-      },
-      "71": {
-        class_type: "EmptyFlux2LatentImage",
-        inputs: { width: size.width, height: size.height, batch_size: 1 },
-      },
-      "18": {
-        class_type: "RandomNoise",
-        inputs: { noise_seed: seed },
-      },
-      "16": {
-        class_type: "KSamplerSelect",
-        inputs: { sampler_name: samplerName },
-      },
-      "70": {
-        class_type: "KSampler",
-        inputs: {
-          model: ["66", 0],
-          positive: ["76", 0],
-          negative: ["78", 0],
-          latent_image: ["71", 0],
-          noise: ["18", 0],
-          sampler: ["16", 0],
-          scheduler,
-          steps,
-          cfg,
-          denoise: 1,
-        },
-      },
-      "65": {
-        class_type: "VAEDecode",
-        inputs: { samples: ["70", 0], vae: ["63", 0] },
-      },
-      "73": {
-        class_type: "SaveImage",
-        inputs: { filename_prefix: isTurbo ? "ernie-image-turbo" : "ernie-image", images: ["65", 0] },
-      },
-    };
+    const clone = JSON.parse(JSON.stringify(ERNIE_IMAGE_API_PROMPT)) as Record<string, { inputs: Record<string, unknown> }>;
+
+    clone["88:78"].inputs.value = prompt;
+    clone["88:72"].inputs.text = negativeText;
+    clone["88:76"].inputs.value = true;
+    clone["88:71"].inputs.width = size.width;
+    clone["88:71"].inputs.height = size.height;
+    clone["88:71"].inputs.batch_size = 1;
+    clone["88:70"].inputs.seed = seed;
+    clone["88:70"].inputs.steps = steps;
+    clone["88:70"].inputs.cfg = cfg;
+    clone["88:70"].inputs.sampler_name = samplerName;
+    clone["88:70"].inputs.scheduler = scheduler;
+    clone["88:70"].inputs.denoise = 1;
+    clone["88:66"].inputs.unet_name = unetFile;
+    clone["88:92"].inputs.source = size.width;
+    clone["88:93"].inputs.source = size.height;
+    clone["73"].inputs.filename_prefix = isTurbo ? "ernie-image-turbo" : "ernie-image";
+
+    return clone as unknown as Record<string, unknown>;
   }
 
   private async pollForImage(promptId: string): Promise<{ filename: string; subfolder?: string; type?: string }> {

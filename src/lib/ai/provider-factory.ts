@@ -17,6 +17,8 @@ import { ASXSImageProvider } from "./providers/asxs-image";
 import { FramepackVideoProvider } from "./providers/framepack-video";
 import { OmnigenImageProvider } from "./providers/omnigen-image";
 import { AgnesVideoProvider } from "./providers/agnes-video";
+import { NvidiaNimImageProvider } from "./providers/nvidia-nim-image";
+import { NvidiaNimVideoProvider } from "./providers/nvidia-nim-video";
 import { setDefaultAIProvider, getAIProvider, getVideoProvider } from "./index";
 import type { AIProvider, VideoProvider } from "./types";
 
@@ -108,6 +110,13 @@ export function createAIProvider(config: ProviderConfig, uploadDir?: string): AI
         model: config.modelId,
         ...(uploadDir && { uploadDir }),
       });
+    case "nvidia-nim":
+      return new NvidiaNimImageProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        model: config.modelId,
+        ...(uploadDir && { uploadDir }),
+      });
     case "omnigen":
       return new OmnigenImageProvider({
         baseUrl: config.baseUrl,
@@ -181,6 +190,13 @@ export function createVideoProvider(config: ProviderConfig, uploadDir?: string):
       });
     case "agnes":
       return new AgnesVideoProvider({
+        apiKey: config.apiKey,
+        baseUrl: config.baseUrl,
+        model: config.modelId,
+        ...(uploadDir && { uploadDir }),
+      });
+    case "nvidia-nim":
+      return new NvidiaNimVideoProvider({
         apiKey: config.apiKey,
         baseUrl: config.baseUrl,
         model: config.modelId,

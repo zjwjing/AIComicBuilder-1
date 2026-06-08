@@ -26,6 +26,7 @@ const DEFAULT_BASE_URLS: Record<Protocol, string> = {
   comfyui: "https://47jy7y6u49-8188.cnb.run",
   aivideo: "https://aivideomaker.ai",
   nvidia: "https://integrate.api.nvidia.com/v1",
+  "nvidia-nim": "https://ai.api.nvidia.com",
   hidream: "http://localhost:7860",
   siliconflow: "https://api.siliconflow.cn",
   framepack: "http://localhost:7860",
@@ -55,6 +56,7 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
       { value: "hidream", label: "HiDream (本地)" },
       { value: "omnigen", label: "OmniGen (本地)" },
       { value: "agnes", label: "Agnes AI" },
+      { value: "nvidia-nim", label: "NVIDIA NIM (Cosmos)" },
     ];
   }
   // video
@@ -67,6 +69,7 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
     { value: "comfyui", label: "ComfyUI" },
       { value: "aivideo", label: "AI Video" },
       { value: "agnes", label: "Agnes AI" },
+      { value: "nvidia-nim", label: "NVIDIA NIM (Cosmos)" },
     ];
 }
 
