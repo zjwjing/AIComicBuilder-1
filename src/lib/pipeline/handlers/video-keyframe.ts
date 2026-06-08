@@ -183,8 +183,8 @@ export async function handleSingleVideoGenerate(
       MODEL_FAMILY: promptFamily || "",
     });
     const videoPrompt = is4Grid
-      ? await enhanceVideoPrompt(fourGridPrompt, modelConfig, "four_grid")
-      : await enhanceVideoPrompt(basePrompt, modelConfig);
+      ? await enhanceVideoPrompt(fourGridPrompt, modelConfig, "four_grid", promptFamily)
+      : await enhanceVideoPrompt(basePrompt, modelConfig, "default", promptFamily);
 
     const fourGridRefs = is4Grid
       ? [shotView.panels[0], shotView.panels[1], shotView.panels[2], shotView.panels[3]].filter(Boolean) as string[]
@@ -397,8 +397,8 @@ export async function handleBatchVideoGenerate(
           MODEL_FAMILY: promptFamily || "",
         });
         const videoPrompt = is4Grid
-          ? await enhanceVideoPrompt(fourGridPrompt, modelConfig, "four_grid")
-          : await enhanceVideoPrompt(basePrompt, modelConfig);
+          ? await enhanceVideoPrompt(fourGridPrompt, modelConfig, "four_grid", promptFamily)
+          : await enhanceVideoPrompt(basePrompt, modelConfig, "default", promptFamily);
 
         await db
           .update(shots)

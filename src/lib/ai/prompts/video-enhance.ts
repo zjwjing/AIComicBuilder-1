@@ -1,6 +1,6 @@
 import { resolveAIProvider } from "../provider-factory";
 import type { ModelConfig } from "@/lib/generate-utils";
-import { inferVideoPromptFamily } from "../video-model-strategy";
+import { inferVideoPromptFamily, type VideoPromptFamily } from "../video-model-strategy";
 
 type VideoEnhanceMode = "default" | "four_grid";
 
@@ -90,18 +90,19 @@ export async function enhanceVideoPrompt(
   rawPrompt: string,
   modelConfig?: ModelConfig,
   mode: VideoEnhanceMode = "default",
+  family?: VideoPromptFamily,
 ): Promise<string> {
   const trimmed = rawPrompt.trim();
   if (!trimmed || trimmed.length < 20) return trimmed;
 
   try {
     const provider = resolveAIProvider(modelConfig);
-    const family = inferVideoPromptFamily(modelConfig);
+    const effectiveFamily = family ?? inferVideoPromptFamily(modelConfig);
     const systemPrompt = mode === "four_grid"
       ? FOUR_GRID_ENHANCE_SYSTEM_PROMPT
-      : family === "wan"
+      : effectiveFamily === "wan"
         ? WAN_ENHANCE_SYSTEM_PROMPT
-        : family === "seedance"
+        : effectiveFamily === "seedance"
           ? SEEDANCE_ENHANCE_SYSTEM_PROMPT
           : DEFAULT_ENHANCE_SYSTEM_PROMPT;
     const enhanced = await provider.generateText(trimmed, {
