@@ -2,7 +2,11 @@
 import { languageRuleBlock } from "./blocks";
 // ─── 11. video_generate ─────────────────────────────────
 
-const VIDEO_INTERPOLATION_HEADER = `用自然中文散文描述从首帧到尾帧之间发生的动态过程。不要使用结构化标签（"Scene:"、"Action:"），不要权重语法（"（xx：1.5）"）。把镜头当一段电影画面来写，语言要让模型"看见"。
+const VIDEO_QUALITY_ANCHOR = `(volumetric lighting:1.25), (cinematic film grain:1.2), (shallow depth of field:1.15), (photorealistic:1.3), (8K ultra-detailed:1.15)`;
+
+const VIDEO_NEGATIVE_PROMPT = `水印、字幕、文字 LOGO、标识、时间码、画面边框、模糊、抖动、变形、多余肢体、重复人脸、画面闪烁、字幕条、台标、穿帮镜头`;
+
+const VIDEO_INTERPOLATION_HEADER = `用自然中文散文描述从首帧到尾帧之间发生的动态过程。优先使用 (keyword:权重) 语法强化关键元素（如 (角色名:1.3)、(关键动作:1.2)）。把镜头当一段电影画面来写，语言要让模型"看见"。
 
 写作要点（Seedance 2.0 风格）：
 - 主体动作：具体的肢体运动——握紧、倾身、回头、抬手、脚步变缓、呼吸停顿；写速度与力度。
@@ -45,19 +49,25 @@ export const videoGenerateDef: PromptDefinition = {
   descriptionKey: "promptTemplates.prompts.videoGenerateDesc",
   category: "video",
   slots: [
+    slot("quality_anchor", VIDEO_QUALITY_ANCHOR, true),
     slot("interpolation_header", VIDEO_INTERPOLATION_HEADER, true),
     slot("dialogue_format", VIDEO_DIALOGUE_FORMAT, true),
     slot("frame_anchors", VIDEO_FRAME_ANCHORS, true),
+    slot("negative_prompt", VIDEO_NEGATIVE_PROMPT, true),
   ],
   buildFullPrompt(sc) {
     const s = this.slots;
     const r = (k: string) => resolve(sc, s, k);
     return [
+      r("quality_anchor"),
+      "",
       r("interpolation_header"),
       "",
       r("dialogue_format"),
       "",
       r("frame_anchors"),
+      "",
+      r("negative_prompt"),
     ].join("\n");
   },
 };
@@ -92,19 +102,25 @@ export const refVideoGenerateDef: PromptDefinition = {
   descriptionKey: "promptTemplates.prompts.refVideoGenerateDesc",
   category: "video",
   slots: [
+    slot("quality_anchor", VIDEO_QUALITY_ANCHOR, true),
     slot("consistency_rules", REF_VIDEO_CONSISTENCY_RULES, true),
     slot("duration_strategy", REF_VIDEO_DURATION_STRATEGY, true),
-    slot("dialogue_format", REF_VIDEO_DIALOGUE_FORMAT, true),
+    slot("dialogue_format", VIDEO_DIALOGUE_FORMAT, true),
+    slot("negative_prompt", VIDEO_NEGATIVE_PROMPT, true),
   ],
   buildFullPrompt(sc) {
     const s = this.slots;
     const r = (k: string) => resolve(sc, s, k);
     return [
+      r("quality_anchor"),
+      "",
       r("consistency_rules"),
       "",
       r("duration_strategy"),
       "",
       r("dialogue_format"),
+      "",
+      r("negative_prompt"),
     ].join("\n");
   },
 };
