@@ -214,6 +214,8 @@ export function buildVideoPrompt(params: {
   family?: "ltx" | "wan" | "seedance" | "generic";
   slotContents?: Record<string, string>;
   segmentContext?: SegmentContext;
+  /** One-sentence summary of what the previous shot ended with, for cross-shot continuity. */
+  previousShotSummary?: string;
 }): string {
   const lang = detectLanguage(params.videoScript);
   const L = getLabels(lang);
@@ -222,6 +224,11 @@ export function buildVideoPrompt(params: {
   if (params.duration) {
     const capped = Math.min(params.duration, 15);
     lines.push(`${L.duration}${L.colon}${capped}s${L.period}`);
+    lines.push(``);
+  }
+
+  if (params.previousShotSummary) {
+    lines.push(`${lang === "zh" ? "前情" : "Previous shot"}${L.colon}${params.previousShotSummary}${L.period}`);
     lines.push(``);
   }
 

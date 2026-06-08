@@ -166,6 +166,7 @@ export async function handleSingleVideoGenerate(
       visualStyle: visualStyle || undefined,
       family: promptFamily,
       slotContents: videoSlots,
+      previousShotSummary: payload?.previousShotSummary as string | undefined,
     });
 
     const fourGridPrompt = await build4GridPrompt("video_generate_4grid", userId, projectId, {
@@ -322,6 +323,7 @@ export async function handleBatchVideoGenerate(
   const visualStyle = buildVisualStyleContext(scriptSource[0]?.script || "", scriptSource[0]?.idea || "");
   let propagatedFirstFrame: string | null = null;
   let propagatedFromShotId: string | null = null;
+  let propagatedEndDesc: string | null = null;
   for (const shot of eligible) {
       try {
         const shotLegacy = allShotsLegacy.get(shot.id);
@@ -378,6 +380,7 @@ export async function handleBatchVideoGenerate(
           visualStyle: visualStyle || undefined,
           family: promptFamily,
           slotContents: videoSlots,
+          previousShotSummary: propagatedEndDesc ?? undefined,
         });
 
         const fourGridPrompt = await build4GridPrompt("video_generate_4grid", userId, projectId, {
@@ -434,6 +437,7 @@ export async function handleBatchVideoGenerate(
           });
           propagatedFirstFrame = tailFramePath;
           propagatedFromShotId = shot.id;
+          propagatedEndDesc = shotLegacy?.endFrameDesc ?? shotLegacy?.startFrameDesc ?? null;
         }
 
         await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shot.id));
