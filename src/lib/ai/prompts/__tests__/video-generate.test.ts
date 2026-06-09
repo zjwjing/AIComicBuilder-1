@@ -71,8 +71,8 @@ describe("buildVideoPrompt", () => {
       cameraDirection: "static",
       family: "seedance",
     });
-    expect(result).toContain("镜头运动");
-    expect(result).toContain("环境反应");
+    expect(result).toContain("camera motion");
+    expect(result).toContain("environmental reactions");
   });
 
   it("omits strategy line when family=ltx", () => {
@@ -81,7 +81,8 @@ describe("buildVideoPrompt", () => {
       cameraDirection: "static",
       family: "ltx",
     });
-    expect(result).not.toContain("写作策略");
+    expect(result).not.toContain("策略");
+    expect(result).not.toContain("strategy");
   });
 
   it("includes on-screen dialogues", () => {

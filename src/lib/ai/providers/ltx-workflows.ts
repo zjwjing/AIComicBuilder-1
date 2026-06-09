@@ -1,6 +1,6 @@
 import type { SigmaPreset, CameraControl } from "../types";
 
-const NEGATIVE_PROMPT = "裸露，低胸，透视，紧身过度，暧昧姿势，魅惑表情，擦边，低俗，成人向，暴露肌肤，走光，贴身慵懒，私密场景，色情画风，夸张肢体变形，不健康构图，多肢体，nsfw, nude, sexual, porn, erotic, adult, explicit, pc game, console game, video game, cartoon, childish, ugly, violence, gore, horror, deformed, bad anatomy, worst quality, 文字，水印，字幕，text, subtitles, captions, burned-in text, overlay text, watermark, logo, signature, numbers, letters, blurry text, garbage characters, unreadable symbols, genitalia, breasts, nipples, vagina, penis, buttocks, naked, undressed, see-through, cleavage, lingerie, intimate, provocative, seductive";
+const NEGATIVE_PROMPT = "pc game, console game, video game, cartoon, childish, ugly, nsfw, 文字，水印，字幕，text, subtitles, captions, burned-in text, overlay text, watermark, logo, signature, numbers, letters, blurry text, garbage characters, unreadable symbols";
 
 function randomSeed(): number {
   return Math.floor(Math.random() * 1_000_000_000_000_000);

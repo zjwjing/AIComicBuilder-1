@@ -68,11 +68,6 @@ function resolveSlot(
   return hardcodedFallback;
 }
 
-/**
- * Prompt for reference-image-based video generation (Toonflow/Kling reference mode).
- * Seedance-style format: Shot description (prose) → Camera → 【对白口型】.
- * No frame interpolation header, no [FRAME ANCHORS] — the reference image provides visual context.
- */
 export function buildReferenceVideoPrompt(params: {
   videoScript: string;
   cameraDirection: string;
@@ -164,60 +159,16 @@ export function buildReferenceVideoPrompt(params: {
 }
 
 export type SegmentContext = {
-  index: number;   // 0-based segment index
-  total: number;   // total segments
+  index: number;
+  total: number;
 };
-
-function buildInterpolationHeader(
-  segmentContext: SegmentContext | undefined,
-  lang: "zh" | "en",
-  slotContents: Record<string, string> | undefined
-): string {
-  const defaultFull = lang === "zh"
-    ? "从起始帧到结束帧进行平滑插值。"
-    : "Smoothly interpolate from the opening frame to the closing frame.";
-
-  const hasSlotOverride = slotContents && slotContents["interpolation_header"];
-
-  if (!segmentContext || segmentContext.total <= 1) {
-    return resolveSlot(slotContents, "video_generate", "interpolation_header", defaultFull);
-  }
-
-  const isFirst = segmentContext.index === 0;
-  const isLast = segmentContext.index === segmentContext.total - 1;
-
-  if (isFirst) {
-    const firstHeader = lang === "zh"
-      ? `【第1段/共${segmentContext.total}段】从起始帧开始，描述前${segmentContext.index + 1}段（共${segmentContext.total}段）中的第一段运动。`
-      : `[Segment 1/${segmentContext.total}] Starting from the opening frame, describe the first segment of motion.`;
-    return hasSlotOverride
-      ? resolveSlot(slotContents, "video_generate", "interpolation_header", firstHeader)
-      : firstHeader;
-  }
-
-  if (isLast) {
-    const lastHeader = lang === "zh"
-      ? `【第${segmentContext.index + 1}段/共${segmentContext.total}段】最终段，从当前帧到结束帧完成剩余运动。`
-      : `[Segment ${segmentContext.index + 1}/${segmentContext.total}] Final segment, complete the remaining motion from current frame to the closing frame.`;
-    return hasSlotOverride
-      ? resolveSlot(slotContents, "video_generate", "interpolation_header", lastHeader)
-      : lastHeader;
-  }
-
-  const midHeader = lang === "zh"
-    ? `【第${segmentContext.index + 1}段/共${segmentContext.total}段】中间段，从当前帧继续推进，朝结束帧方向描述此段运动。`
-    : `[Segment ${segmentContext.index + 1}/${segmentContext.total}] Mid segment, continue from the current frame toward the closing frame.`;
-  return hasSlotOverride
-    ? resolveSlot(slotContents, "video_generate", "interpolation_header", midHeader)
-    : midHeader;
-}
 
 export function buildVideoPrompt(params: {
   videoScript: string;
   cameraDirection: string;
   startFrameDesc?: string;
   endFrameDesc?: string;
-  sceneDescription?: string;       // kept for call-site compatibility, not used in output
+  sceneDescription?: string;
   duration?: number;
   characters?: CharacterRef[];
   dialogues?: Array<{ characterName: string; text: string; offscreen?: boolean; visualHint?: string }>;
@@ -225,7 +176,6 @@ export function buildVideoPrompt(params: {
   family?: "ltx" | "wan" | "seedance" | "generic";
   slotContents?: Record<string, string>;
   segmentContext?: SegmentContext;
-  /** One-sentence summary of what the previous shot ended with, for cross-shot continuity. */
   previousShotSummary?: string;
 }): string {
   const lang = detectLanguage(params.videoScript);
@@ -273,12 +223,15 @@ export function buildVideoPrompt(params: {
     lines.push(``);
   }
 
-  // Interpolation header — segment-aware for multi-segment shots
-  const interpolationHeader = buildInterpolationHeader(
-    params.segmentContext, lang, params.slotContents
-  );
-  lines.push(interpolationHeader);
-  lines.push(``);
+  // Interpolation header — short and clean for video model input
+  if (params.segmentContext && params.segmentContext.total > 1) {
+    const seg = params.segmentContext;
+    const header = lang === "zh"
+      ? `【第${seg.index + 1}段/共${seg.total}段】`
+      : `[Segment ${seg.index + 1}/${seg.total}]`;
+    lines.push(header);
+    lines.push(``);
+  }
 
   lines.push(params.videoScript);
 
