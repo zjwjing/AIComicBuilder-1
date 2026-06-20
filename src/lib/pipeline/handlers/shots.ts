@@ -16,7 +16,10 @@ import {
   shouldUseStrictJsonMode,
 } from "@/lib/generate-utils";
 import { buildShotSplitPrompt, SHOT_SPLIT_SYSTEM } from "@/lib/ai/prompts/shot-split";
+import { recommendTransitions } from "@/lib/transition-recommender";
 import { id as genId } from "@/lib/id";
+import { registerTask } from "@/lib/task-registry";
+import { updateTaskProgress, completeTask, failTask } from "@/lib/task-utils";
 import {
   loadShotLegacyView,
   getActiveAsset,
@@ -30,7 +33,7 @@ async function upsertPromptAsset(shotId: string, type: ShotAssetType, prompt: st
   if (existing) {
     await patchAsset(existing.id, { prompt });
   } else {
-    await insertAssetVersion({ shotId, type, sequenceInType: 0, prompt, status: "pending" });
+    await insertAssetVersion({ shotId, type, sequenceInType: 0, prompt, status: "pending", generationId: genId() });
   }
 }
 
@@ -46,6 +49,7 @@ type ParsedShot = {
   cameraDirection?: string;
   transitionIn?: string;
   transitionOut?: string;
+  sceneId?: string;
   compositionGuide?: string;
   focalPoint?: string;
   depthOfField?: string;
@@ -97,8 +101,11 @@ export async function handleShotSplitStream(
   userId: string,
   _payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
+  if (taskId) updateTaskProgress(taskId, { total: 0, completed: 0, failed: [] });
   let script: string | null = null;
   if (episodeId) {
     const [episode] = await db.select().from(episodes).where(eq(episodes.id, episodeId));
@@ -148,16 +155,44 @@ export async function handleShotSplitStream(
       // Parse agent output and save to DB (same logic as built-in pipeline)
       const agentParsed = JSON.parse(extractJSON(agentResult.text));
       let agentShots: ParsedShot[];
+      let agentSceneGroup = 0;
       if (Array.isArray(agentParsed) && agentParsed.length > 0 && agentParsed[0].shots) {
-        agentShots = agentParsed.flatMap((scene: { sceneDescription?: string; shots?: ParsedShot[] }) =>
-          (scene.shots || []).map((s) => ({ ...s, sceneDescription: s.sceneDescription || scene.sceneDescription || "" }))
-        );
+        agentShots = agentParsed.flatMap((scene: { sceneDescription?: string; shots?: ParsedShot[] }) => {
+          const shots = (scene.shots || []).map((s) => ({
+            ...s,
+            sceneDescription: s.sceneDescription || scene.sceneDescription || "",
+            sceneId: `sg_${agentSceneGroup}`,
+          }));
+          if (shots.length > 0) agentSceneGroup++;
+          return shots;
+        });
       } else if (Array.isArray(agentParsed)) {
-        agentShots = agentParsed;
+        agentShots = agentParsed.map((s) => ({ ...s, sceneId: `sg_${agentSceneGroup++}` }));
       } else {
-        agentShots = agentParsed.shots || [];
+        agentShots = (agentParsed.shots || []).map((s: ParsedShot) => ({ ...s, sceneId: `sg_${agentSceneGroup}` }));
       }
       agentShots.forEach((s, i) => { s.sequence = i + 1; });
+
+      // ── Fill transition recommendations ──
+      const agentRecs = recommendTransitions(agentShots.map((s) => ({
+        id: "tmp",
+        sequence: s.sequence,
+        prompt: s.sceneDescription,
+        motionScript: s.motionScript ?? null,
+        videoScript: s.videoScript ?? null,
+        cameraDirection: s.cameraDirection ?? null,
+        duration: s.duration ?? null,
+        sceneId: s.sceneId ?? null,
+        transitionIn: null,
+        transitionOut: null,
+      })));
+      for (const rec of agentRecs) {
+        const shot = agentShots.find((s) => s.sequence === rec.sequence);
+        if (shot) {
+          shot.transitionIn = rec.recommendedTransitionIn;
+          shot.transitionOut = rec.recommendedTransitionOut;
+        }
+      }
 
       if (agentShots.length === 0) {
         return NextResponse.json({ error: "智能体未返回有效分镜数据" }, { status: 422 });
@@ -196,6 +231,7 @@ export async function handleShotSplitStream(
         duration: shot.duration || 8,
         transitionIn: shot.transitionIn || "cut",
         transitionOut: shot.transitionOut || "cut",
+        sceneId: shot.sceneId ?? null,
         compositionGuide: shot.compositionGuide || "",
         focalPoint: shot.focalPoint || "",
         depthOfField: shot.depthOfField || "medium",
@@ -379,7 +415,9 @@ export async function handleShotSplitStream(
   // Process chunks (up to 3 in parallel) to reduce total wall-clock time.
   const chunkResults: Array<{ shots: ParsedShot[]; error: string | null }> = [];
   const CONCURRENCY = 3;
+  if (taskId) updateTaskProgress(taskId, { total: sceneChunks.length, completed: 0, failed: [] });
   for (let start = 0; start < sceneChunks.length; start += CONCURRENCY) {
+    if (taskSignal?.aborted) { completeTask(taskId!, { total: sceneChunks.length, completed: chunkResults.reduce((s, r) => s + r.shots.length, 0), failed: ["Cancelled"] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
     const batch = sceneChunks.slice(start, start + CONCURRENCY);
     console.log(`[ShotSplit] Processing batch ${Math.floor(start / CONCURRENCY) + 1}/${Math.ceil(sceneChunks.length / CONCURRENCY)} (${batch.length} chunk(s))`);
     const batchResults = await Promise.allSettled(
@@ -408,6 +446,7 @@ export async function handleShotSplitStream(
       const fallbackShots: ParsedShot[] = [];
       let fallbackError: string | null = null;
       for (let subIdx = 0; subIdx < singleSceneChunks.length; subIdx++) {
+        if (taskSignal?.aborted) { completeTask(taskId!, { total: sceneChunks.length, completed: chunkResults.reduce((s, r) => s + r.shots.length, 0), failed: ["Cancelled"] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
         const subResult = await generateShotSplitChunk(
           singleSceneChunks[subIdx],
           `Chunk ${idx + 1}.${subIdx + 1}/${singleSceneChunks.length}`
@@ -425,18 +464,50 @@ export async function handleShotSplitStream(
         chunkResults.push({ shots: fallbackShots, error: null });
       }
     }
+    if (taskId) updateTaskProgress(taskId, { total: sceneChunks.length, completed: Math.min(start + CONCURRENCY, sceneChunks.length), failed: chunkResults.filter(r => r.error).map(r => r.error!).filter(Boolean) });
   }
 
-  // Merge and re-sequence
-  const allShots = chunkResults.flatMap((result) => result.shots);
+  // Merge and re-sequence, assigning scene group IDs by chunk origin
+  const allShots: ParsedShot[] = [];
+  let sceneGroup = 0;
+  for (const result of chunkResults) {
+    for (const shot of result.shots) {
+      shot.sceneId = `sg_${sceneGroup}`;
+      allShots.push(shot);
+    }
+    if (result.shots.length > 0) sceneGroup++;
+  }
   allShots.forEach((s, i) => { s.sequence = i + 1; });
+
+  // ── Fill transition recommendations ──
+  const recs = recommendTransitions(allShots.map((s) => ({
+    id: "tmp",
+    sequence: s.sequence,
+    prompt: s.sceneDescription,
+    motionScript: s.motionScript ?? null,
+    videoScript: s.videoScript ?? null,
+    cameraDirection: s.cameraDirection ?? null,
+    duration: s.duration ?? null,
+    sceneId: s.sceneId ?? null,
+    transitionIn: null,
+    transitionOut: null,
+  })));
+  for (const rec of recs) {
+    const shot = allShots.find((s) => s.sequence === rec.sequence);
+    if (shot) {
+      shot.transitionIn = rec.recommendedTransitionIn;
+      shot.transitionOut = rec.recommendedTransitionOut;
+    }
+  }
 
   if (allShots.length === 0) {
     const errors = chunkResults
       .map((result) => result.error)
       .filter((error): error is string => Boolean(error));
+    const errorMsg = errors[0] || "Failed to generate shots";
+    if (taskId) failTask(taskId, errorMsg);
     return NextResponse.json(
-      { error: errors[0] || "Failed to generate shots" },
+      { error: errorMsg },
       { status: 500 }
     );
   }
@@ -481,6 +552,7 @@ export async function handleShotSplitStream(
     duration: shot.duration,
     transitionIn: shot.transitionIn || "cut",
     transitionOut: shot.transitionOut || "cut",
+    sceneId: shot.sceneId ?? null,
     compositionGuide: shot.compositionGuide || "",
     focalPoint: shot.focalPoint || "",
     depthOfField: shot.depthOfField || "medium",
@@ -507,6 +579,7 @@ export async function handleShotSplitStream(
   }
 
   console.log(`[ShotSplit] Created ${allShots.length} shots from ${sceneChunks.length} chunks into version ${versionLabel} (${versionId})`);
+  if (taskId) completeTask(taskId, { total: sceneChunks.length, completed: sceneChunks.length, failed: chunkResults.filter(r => r.error).map(r => r.error!) });
   return NextResponse.json({ shots: allShots.length });
 }
 

@@ -16,17 +16,23 @@ import { resolvePrompt } from "@/lib/ai/prompts/resolver";
 import { buildKeyframePromptsRequest } from "@/lib/ai/prompts/keyframe-prompts";
 import { buildVisualStyleContext } from "@/lib/visual-style";
 import { insertAssetVersion } from "@/lib/shot-asset-utils";
+import { id as genId } from "@/lib/id";
+import { registerTask } from "@/lib/task-registry";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
 
 export async function handleGenerateKeyframePrompts(
   projectId: string,
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   const generationMode = await resolveGenerationMode(projectId, episodeId);
   const panelStartType = generationMode === "4grid" ? "panel_1" as const : "first_frame" as const;
   const panelEndType = generationMode === "4grid" ? "panel_4" as const : "last_frame" as const;
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
+  if (taskId) updateTaskProgress(taskId, { total: 0, completed: 0, failed: [] });
 
   // === 智能体路由 ===
   const kpBoundAgent = await findBoundAgent(projectId, "keyframe_prompts");
@@ -62,8 +68,12 @@ export async function handleGenerateKeyframePrompts(
         return NextResponse.json({ error: "智能体必须返回 JSON 数组格式的首尾帧提示词" }, { status: 422 });
       }
 
+      const agentGenId = genId();
       let savedCount = 0;
-      for (const entry of kpParsed) {
+      const agentTotal = kpParsed.length;
+      for (let ai = 0; ai < agentTotal; ai++) {
+        const entry = kpParsed[ai];
+        if (taskSignal?.aborted) { break; }
         const seq = (entry.sequence as number) ?? (entry.shotSequence as number) ?? 0;
         const shot = kpAgentShots.find((s) => s.sequence === seq);
         if (!shot) continue;
@@ -73,18 +83,20 @@ export async function handleGenerateKeyframePrompts(
         const chars = Array.isArray(entry.characters) ? entry.characters as string[] : [];
 
         if (startFrame) {
-          await insertAssetVersion({ shotId: shot.id, type: panelStartType, sequenceInType: 0, prompt: startFrame, status: "pending", characters: chars });
+          await insertAssetVersion({ shotId: shot.id, type: panelStartType, sequenceInType: 0, prompt: startFrame, status: "pending", characters: chars, generationId: agentGenId });
           savedCount++;
         }
         if (endFrame) {
-          await insertAssetVersion({ shotId: shot.id, type: panelEndType, sequenceInType: 0, prompt: endFrame, status: "pending", characters: chars });
+          await insertAssetVersion({ shotId: shot.id, type: panelEndType, sequenceInType: 0, prompt: endFrame, status: "pending", characters: chars, generationId: agentGenId });
           savedCount++;
         }
       }
-      console.log(`[KeyframePrompts Agent] Saved ${savedCount} assets from ${kpParsed.length} shots`);
-      return NextResponse.json({ updatedCount: kpParsed.length, totalShots: kpAgentShots.length });
+      if (taskId) completeTask(taskId, { total: agentTotal, completed: savedCount > 0 ? agentTotal : 0, failed: [] });
+      console.log(`[KeyframePrompts Agent] Saved ${savedCount} assets from ${agentTotal} shots`);
+      return NextResponse.json({ updatedCount: agentTotal, totalShots: kpAgentShots.length });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (taskId) completeTask(taskId, { total: 0, completed: 0, failed: [msg] });
       return NextResponse.json({ error: `智能体首尾帧提示词解析失败: ${msg}` }, { status: 422 });
     }
   }
@@ -163,13 +175,18 @@ export async function handleGenerateKeyframePrompts(
     projectId,
   });
 
+  const loopGenId = genId();
+
   // Serial per-shot generation: process one shot at a time to avoid rate limits.
   const total = allShots.length;
   let doneCount = 0;
   let updatedCount = 0;
+  const failed: string[] = [];
+  if (taskId) updateTaskProgress(taskId, { total, completed: 0, failed: [] });
   console.log(`[GenerateKeyframePrompts] Starting serial generation: 0/${total}`);
 
   for (const shot of allShots) {
+    if (taskSignal?.aborted) { break; }
     try {
       const basePromptRequest = buildKeyframePromptsRequest(
         [{
@@ -218,6 +235,7 @@ export async function handleGenerateKeyframePrompts(
         prompt: entry.prompts[0],
         status: "pending",
         characters: charsForShot,
+        generationId: loopGenId,
       });
       await insertAssetVersion({
         shotId: shot.id,
@@ -226,16 +244,21 @@ export async function handleGenerateKeyframePrompts(
         prompt: entry.prompts[1],
         status: "pending",
         characters: charsForShot,
+        generationId: loopGenId,
       });
       doneCount++;
       updatedCount++;
+      if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed });
       console.log(`[GenerateKeyframePrompts] ✓ shot ${shot.sequence} (${doneCount}/${total})`);
     } catch (err) {
       doneCount++;
+      failed.push(shot.id);
+      if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed });
       console.warn(`[GenerateKeyframePrompts] ✗ shot ${shot.sequence} (${doneCount}/${total}): ${String(err)}`);
     }
   }
 
+  if (taskId) completeTask(taskId, { total, completed: updatedCount, failed });
   console.log(`[GenerateKeyframePrompts] Updated ${updatedCount}/${allShots.length} shots (serial)`);
   return NextResponse.json({ updatedCount, totalShots: allShots.length });
 }

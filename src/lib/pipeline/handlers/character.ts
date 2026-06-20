@@ -16,6 +16,8 @@ import { detectImageModelFamily } from "@/lib/ai/prompts/character-image";
 import { resolveImageProvider } from "@/lib/ai/provider-factory";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY, DEFAULT_CHARACTER_IMAGE_SIZE } from "@/lib/config/defaults";
 import { id as genId } from "@/lib/id";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { registerTask } from "@/lib/task-registry";
 import {
   loadShotLegacyViewsBatch,
   patchAsset,
@@ -401,7 +403,8 @@ export async function handleBatchCharacterImage(
   _userId: string,
   _payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   if (!modelConfig?.image) {
     return NextResponse.json(
@@ -439,8 +442,11 @@ export async function handleBatchCharacterImage(
   else promptKey = "character_image_simple";
 
   const results: Array<{ characterId: string; name: string; imagePath?: string; referenceLayout?: string; singlePortraitPath?: string | null; status: string; error?: string }> = [];
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
+  if (taskId) updateTaskProgress(taskId, { total: needImages.length, completed: 0, failed: [] });
 
   for (const character of needImages) {
+    if (taskSignal?.aborted) { console.log(`[BatchCharacterImage] Aborted at ${character.name}`); break; }
     try {
       const referenceLayout = layoutFromCharacter(character) || defaultLayout;
 
@@ -525,7 +531,9 @@ export async function handleBatchCharacterImage(
       console.error(`[BatchCharacterImage] Error for ${character.name}:`, err);
       results.push({ characterId: character.id, name: character.name, status: "error", error: extractErrorMessage(err) });
     }
+    if (taskId) updateTaskProgress(taskId, { total: needImages.length, completed: results.length, failed: results.filter(r => r.status === "error").map(r => r.characterId) });
   }
 
+  if (taskId) completeTask(taskId, { total: needImages.length, completed: results.length, failed: results.filter(r => r.status === "error").map(r => r.characterId) });
   return NextResponse.json({ results });
 }

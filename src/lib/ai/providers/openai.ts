@@ -74,7 +74,7 @@ export class OpenAIProvider implements AIProvider {
   constructor(params?: { apiKey?: string; baseURL?: string; model?: string; uploadDir?: string; }) {
     this.baseURL = params?.baseURL || process.env.OPENAI_BASE_URL || "";
     this.isNvidia = this.baseURL.includes("integrate.api.nvidia.com");
-    const timeout = this.isNvidia ? 300_000 : 120_000;
+    const timeout = this.isNvidia ? 600_000 : 600_000;
     this.client = new OpenAI({
       apiKey: params?.apiKey || process.env.OPENAI_API_KEY,
       baseURL: this.baseURL,

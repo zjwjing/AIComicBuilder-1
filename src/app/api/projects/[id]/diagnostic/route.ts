@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, episodes, shots, shotAssets, storyboardVersions } from "@/lib/db/schema";
+import { projects, episodes, shots, shotAssets, storyboardVersions, tasks } from "@/lib/db/schema";
 import { eq, and, asc, desc, inArray } from "drizzle-orm";
 import { getUserIdFromRequest } from "@/lib/get-user-id";
+import { recommendTransitions } from "@/lib/transition-recommender";
 
 /** Structured per-shot diagnostic state */
 interface ShotDiagnostic {
@@ -149,6 +150,12 @@ export async function GET(
   const staleShots = shotsDiagnostic.filter((s) => s.isStale).length;
   const shotsWithVideoPrompt = shotsDiagnostic.filter((s) => s.hasVideoPrompt).length;
 
+  const [activeTask] = await db
+    .select({ id: tasks.id, type: tasks.type, status: tasks.status, createdAt: tasks.createdAt })
+    .from(tasks)
+    .where(and(eq(tasks.projectId, id), eq(tasks.status, "running")))
+    .limit(1);
+
   return NextResponse.json({
     project: {
       id: project.id,
@@ -161,6 +168,7 @@ export async function GET(
     version: latestVersion
       ? { id: latestVersion.id, label: latestVersion.label, versionNum: latestVersion.versionNum }
       : null,
+    activeTask: activeTask ?? null,
     episodes: episodeRows.map((e) => ({
       id: e.id,
       title: e.title,
@@ -181,8 +189,44 @@ export async function GET(
       staleShots,
       completionPercent: totalShots ? Math.round((completedShots / totalShots) * 100) : 0,
       videoCompletionPercent: totalShots ? Math.round((readyForVideo / totalShots) * 100) : 0,
+      suboptimalTransitions: shotRows.length >= 2 ? (() => {
+        const shotData = shotRows.map((s) => ({
+          id: s.id, sequence: s.sequence, prompt: s.prompt, motionScript: s.motionScript,
+          videoScript: s.videoScript, cameraDirection: s.cameraDirection, duration: s.duration,
+          sceneId: s.sceneId, transitionIn: s.transitionIn, transitionOut: s.transitionOut,
+        }));
+        const recs = recommendTransitions(shotData);
+        return recs.filter((r) => {
+          const actualIn = shotData.find((s) => s.id === r.shotId)?.transitionIn ?? "cut";
+          const actualOut = shotData.find((s) => s.id === r.shotId)?.transitionOut ?? "cut";
+          return actualIn !== r.recommendedTransitionIn || actualOut !== r.recommendedTransitionOut;
+        }).length;
+      })() : 0,
     },
     // Agent-readable diagnostic messages
+    // ── Transition recommendations ──
+    transitions: (() => {
+      if (shotRows.length < 2) return { recommendations: [], suboptimal: 0 };
+      const shotData = shotRows.map((s) => ({
+        id: s.id,
+        sequence: s.sequence,
+        prompt: s.prompt,
+        motionScript: s.motionScript,
+        videoScript: s.videoScript,
+        cameraDirection: s.cameraDirection,
+        duration: s.duration,
+        sceneId: s.sceneId,
+        transitionIn: s.transitionIn,
+        transitionOut: s.transitionOut,
+      }));
+      const recs = recommendTransitions(shotData);
+      const suboptimal = recs.filter((r) => {
+        const actualIn = shotData.find((s) => s.id === r.shotId)?.transitionIn ?? "cut";
+        const actualOut = shotData.find((s) => s.id === r.shotId)?.transitionOut ?? "cut";
+        return (actualIn !== "cut" || actualOut !== "cut") && (actualIn !== r.recommendedTransitionIn || actualOut !== r.recommendedTransitionOut);
+      });
+      return { recommendations: recs, suboptimalCount: suboptimal.length };
+    })(),
     diagnostics: [
       ...(stuckShots > 0
         ? [{ severity: "warning" as const, code: "DIAG_001", message: `${stuckShots} shot(s) stuck in "generating" state`, fix: "Run reset_stuck_shots action" }]

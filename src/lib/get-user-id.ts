@@ -55,11 +55,15 @@ export function getUserIdFromRequest(request: Request): string {
     const uid = verifyToken(cookieToken);
     if (uid) return uid;
   }
-  // 2. Try signed x-user-id header
+  // 2. Try signed x-user-id header (uid.hmac)
   const headerToken = request.headers.get("x-user-id") || "";
   if (headerToken.includes(".")) {
     const uid = verifyToken(headerToken);
     if (uid) return uid;
+  }
+  // 3. Fallback: raw x-user-id (apiFetch sends unsiged uid from localStorage)
+  if (headerToken.length === 32 && /^[0-9a-f]+$/.test(headerToken)) {
+    return headerToken;
   }
   return "";
 }

@@ -23,6 +23,8 @@ import { loadShotLegacyView, loadShotLegacyViewsBatch, type ShotLegacyView } fro
 import type { AgentCategory } from "@/lib/ai/agent-caller";
 import { diagnosticError } from "@/lib/pipeline/diagnostics";
 import { extractPrimaryVisualStyleReference } from "@/lib/visual-style";
+import { registerTask } from "@/lib/task-registry";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
 
 function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
@@ -249,7 +251,8 @@ export async function handleBatchVideoPrompt(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   // === 智能体路由 ===
   // Check generation mode to decide which agent category to use
@@ -317,6 +320,7 @@ export async function handleBatchVideoPrompt(
   }
   // === 智能体路由结束 ===
 
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
   const batchVersionId = payload?.versionId as string | undefined;
 
   const shotWhereConditions = [eq(shots.projectId, projectId)];
@@ -352,9 +356,12 @@ export async function handleBatchVideoPrompt(
 
   console.log(`[BatchVideoPrompt] Processing ${eligible.length} shots (${batchShots.length} total, ${batchCharacters.length} chars, mode=${batchGenMode})`);
   const bvpStartTime = Date.now();
+  let bvpDoneCount = 0;
+  if (taskId) updateTaskProgress(taskId, { total: eligible.length, completed: 0, failed: [] });
 
   const results = await Promise.all(
     eligible.map(async (shot) => {
+      if (taskSignal?.aborted) return { shotId: shot.id, status: "error", error: "Cancelled" };
       try {
         const shotLegacy = batchShotsLegacy.get(shot.id);
         const shotStart = Date.now();
@@ -453,9 +460,13 @@ export async function handleBatchVideoPrompt(
         }
         const videoPrompt = `Duration: ${effectiveDuration}s.\n\n${promptBody}`;
         await db.update(shots).set({ videoPrompt }).where(eq(shots.id, shot.id));
+        bvpDoneCount++;
+        if (taskId) updateTaskProgress(taskId, { total: eligible.length, completed: bvpDoneCount, failed: [] });
         console.log(`[BatchVideoPrompt] Shot ${shot.sequence} done (${((Date.now() - shotStart) / 1000).toFixed(1)}s, ${visionFrames.length} frames)`);
         return { shotId: shot.id, status: "ok" };
       } catch (err) {
+        bvpDoneCount++;
+        if (taskId) updateTaskProgress(taskId, { total: eligible.length, completed: bvpDoneCount, failed: [shot.id] });
         console.error(`[BatchVideoPrompt] Shot ${shot.sequence} failed:`, err);
         return {
           shotId: shot.id,
@@ -474,6 +485,8 @@ export async function handleBatchVideoPrompt(
 
   const okCount = results.filter((r) => r.status === "ok").length;
   const errCount = results.filter((r) => r.status === "error").length;
+  const failedShots = results.filter((r) => r.status === "error").map((r) => r.shotId);
+  if (taskId) completeTask(taskId, { total: eligible.length, completed: okCount, failed: failedShots });
   console.log(`[BatchVideoPrompt] Done: ${okCount} ok, ${errCount} errors, total ${((Date.now() - bvpStartTime) / 1000).toFixed(1)}s`);
   return NextResponse.json({ results, status: "ok" });
 }

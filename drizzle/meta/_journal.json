@@ -386,6 +386,13 @@
       "when": 1749312000000,
       "tag": "0054_add_character_reference_layout",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1750000000000,
+      "tag": "0055_add_embeddings",
+      "breakpoints": true
     }
   ]
 }

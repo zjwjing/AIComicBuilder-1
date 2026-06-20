@@ -16,7 +16,8 @@ type HandlerFn = (
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) => Promise<Response>;
 
 const handlerMap: Record<string, HandlerFn> = {
@@ -55,8 +56,9 @@ export function dispatchAction(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ): Promise<Response> | null {
   const handler = handlerMap[action];
-  return handler ? handler(projectId, userId, payload, modelConfig, episodeId) : null;
+  return handler ? handler(projectId, userId, payload, modelConfig, episodeId, taskId) : null;
 }

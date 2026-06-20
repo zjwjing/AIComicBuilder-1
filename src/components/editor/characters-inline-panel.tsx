@@ -52,6 +52,7 @@ export function CharactersInlinePanel({
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [previewSrc, setPreviewSrc] = useState<string | null>(null);
   const [layoutMenuFor, setLayoutMenuFor] = useState<string | null>(null);
+  const layoutButtonRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const storageKey = `charPanel:${projectId}`;
   const anyMissingRef = characters.some((c) => !c.referenceImage);
@@ -65,8 +66,13 @@ export function CharactersInlinePanel({
       if (target && target.closest("[data-layout-menu]")) return;
       setLayoutMenuFor(null);
     }
+    function onScroll() { setLayoutMenuFor(null); }
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("scroll", onScroll);
+    };
   }, [layoutMenuFor]);
 
   useEffect(() => {
@@ -195,7 +201,10 @@ export function CharactersInlinePanel({
                   <span className="max-w-[80px] truncate text-[11px] text-[--text-muted]">{char.name}</span>
                   {/* Generate button (only when no image) */}
                   {!char.referenceImage && (
-                    <div className="relative" data-layout-menu>
+                    <div
+                      ref={(el) => { if (el) layoutButtonRefs.current.set(char.id, el); else layoutButtonRefs.current.delete(char.id); }}
+                      data-layout-menu
+                    >
                       <button
                         onClick={() => {
                           if (isGenerating || !!generatingId) return;
@@ -208,20 +217,31 @@ export function CharactersInlinePanel({
                         Gen
                         <ChevronDown className="h-2.5 w-2.5 opacity-60" />
                       </button>
-                      {layoutMenuFor === char.id && (
-                        <div className="absolute left-1/2 top-full z-30 mt-1 w-32 -translate-x-1/2 rounded-md border border-[--border-subtle] bg-white p-1 shadow-lg">
-                          {LAYOUT_OPTIONS.map((opt) => (
-                            <button
-                              key={opt.value}
-                              onClick={() => handleGenerate(char.id, opt.value)}
-                              className="flex w-full flex-col items-start rounded px-2 py-1 text-left text-[10px] text-[--text-secondary] transition-colors hover:bg-primary/10 hover:text-primary"
-                            >
-                              <span className="font-medium">{opt.label}</span>
-                              <span className="text-[9px] text-[--text-muted]">{opt.hint}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                      {layoutMenuFor === char.id && (() => {
+                        const el = layoutButtonRefs.current.get(char.id);
+                        if (!el) return null;
+                        const r = el.getBoundingClientRect();
+                        const spaceBelow = window.innerHeight - r.bottom;
+                        const openUp = spaceBelow < 140;
+                        return (
+                          <div
+                            className="fixed z-50 rounded-md border border-[--border-subtle] bg-white p-1 shadow-lg"
+                            style={{ left: Math.max(8, r.left + r.width / 2 - 64), top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined }}
+                            data-layout-menu
+                          >
+                            {LAYOUT_OPTIONS.map((opt) => (
+                              <button
+                                key={opt.value}
+                                onClick={() => handleGenerate(char.id, opt.value)}
+                                className="flex w-full flex-col items-start rounded px-2 py-1 text-left text-[10px] text-[--text-secondary] transition-colors hover:bg-primary/10 hover:text-primary"
+                              >
+                                <span className="font-medium">{opt.label}</span>
+                                <span className="text-[9px] text-[--text-muted]">{opt.hint}</span>
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>

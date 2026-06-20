@@ -74,6 +74,7 @@ export function CharacterCard({
   const [uploading, setUploading] = useState(false);
   const [layoutMenu, setLayoutMenu] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const layoutButtonRef = useRef<HTMLDivElement>(null);
   const imageGuard = useModelGuard("image");
   const isGenerating = generating || (!!batchGenerating && !referenceImage);
   const [generationKey, setGenerationKey] = useState(0);
@@ -87,8 +88,13 @@ export function CharacterCard({
       if (target && target.closest("[data-layout-menu]")) return;
       setLayoutMenu(false);
     }
+    function onScroll() { setLayoutMenu(false); }
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      window.removeEventListener("scroll", onScroll);
+    };
   }, [layoutMenu]);
 
   function resolveImageRef(ref: ModelRef | null) {
@@ -287,7 +293,7 @@ export function CharacterCard({
         <div className="space-y-2">
             <InlineModelPicker capability="image" value={imageModelRef} onChange={setImageModelRef} />
             <div className="flex gap-2">
-              <div className="relative flex-1" data-layout-menu>
+              <div ref={layoutButtonRef} className="flex-1" data-layout-menu>
                 <Button
                   onClick={() => setLayoutMenu((v) => !v)}
                   disabled={isGenerating}
@@ -302,20 +308,29 @@ export function CharacterCard({
                   {isGenerating ? t("common.generating") : t("character.generateImage")}
                   <ChevronDown className="h-3.5 w-3.5 opacity-60" />
                 </Button>
-                {layoutMenu && (
-                  <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-md border border-[--border-subtle] bg-white p-1 shadow-lg">
-                    {LAYOUT_OPTIONS.map((opt) => (
-                      <button
-                        key={opt.value}
-                        onClick={() => handleGenerateImage(opt.value)}
-                        className="flex w-full flex-col items-start rounded px-2 py-1.5 text-left text-[11px] text-[--text-secondary] transition-colors hover:bg-primary/10 hover:text-primary"
-                      >
-                        <span className="font-medium">{opt.label}</span>
-                        <span className="text-[10px] text-[--text-muted]">{opt.hint}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {layoutMenu && layoutButtonRef.current && (() => {
+                  const r = layoutButtonRef.current.getBoundingClientRect();
+                  const spaceBelow = window.innerHeight - r.bottom;
+                  const openUp = spaceBelow < 160;
+                  return (
+                    <div
+                      className="fixed z-50 rounded-md border border-[--border-subtle] bg-white p-1 shadow-lg"
+                      style={{ left: r.left, width: r.width, top: openUp ? undefined : r.bottom + 4, bottom: openUp ? window.innerHeight - r.top + 4 : undefined }}
+                      data-layout-menu
+                    >
+                      {LAYOUT_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => handleGenerateImage(opt.value)}
+                          className="flex w-full flex-col items-start rounded px-2 py-1.5 text-left text-[11px] text-[--text-secondary] transition-colors hover:bg-primary/10 hover:text-primary"
+                        >
+                          <span className="font-medium">{opt.label}</span>
+                          <span className="text-[10px] text-[--text-muted]">{opt.hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
               <Button
                 variant="outline"

@@ -20,6 +20,9 @@ import { enhanceVideoPrompt } from "@/lib/ai/prompts/video-enhance";
 import { inferVideoPromptFamily } from "@/lib/ai/video-model-strategy";
 import { buildVisualStyleContext } from "@/lib/visual-style";
 import { extractLastVideoFrame } from "@/lib/video/ffmpeg";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { registerTask } from "@/lib/task-registry";
+import { id as genId } from "@/lib/id";
 
 import {
   loadShotLegacyView,
@@ -214,7 +217,7 @@ export async function handleSingleVideoGenerate(
 
     await insertAssetVersion({
       shotId, type: "keyframe_video", sequenceInType: 0,
-      prompt: videoPrompt, fileUrl: videoPath, status: "completed",
+      prompt: videoPrompt, fileUrl: videoPath, status: "completed", generationId: genId(),
     });
 
     await db
@@ -246,7 +249,8 @@ export async function handleBatchVideoGenerate(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   if (!modelConfig?.video) {
     return NextResponse.json(
@@ -273,22 +277,36 @@ export async function handleBatchVideoGenerate(
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
   const batchGenMode = await resolveGenerationMode(projectId, episodeId);
   const is4Grid = batchGenMode === "4grid";
+  // ── Readiness guard ──
+  const readiness: Array<{ shotId: string; sequence: number; reason: string }> = [];
   const eligible: typeof allShots = [];
   let canUsePreviousVideoTail = false;
   for (const shot of allShots) {
     const v = allShotsLegacy.get(shot.id);
     if (!v || (!overwrite && v.videoUrl)) {
+      if (v?.videoUrl && !overwrite) readiness.push({ shotId: shot.id, sequence: shot.sequence, reason: "already has video (use overwrite to regenerate)" });
+      else readiness.push({ shotId: shot.id, sequence: shot.sequence, reason: "missing shot asset view" });
       canUsePreviousVideoTail = false;
       continue;
     }
     if (is4Grid) {
-      if (getPanelFrames(v).length === 4) eligible.push(shot);
+      const panels = getPanelFrames(v);
+      if (panels.length < 4) {
+        readiness.push({ shotId: shot.id, sequence: shot.sequence, reason: `4grid mode requires 4 panel frames, found ${panels.length}` });
+        canUsePreviousVideoTail = false;
+        continue;
+      }
+      eligible.push(shot);
       continue;
     }
     if (v.lastFrame && (v.firstFrame || canUsePreviousVideoTail)) {
       eligible.push(shot);
       canUsePreviousVideoTail = true;
     } else {
+      const missing = [];
+      if (!v.firstFrame && !canUsePreviousVideoTail) missing.push("first_frame (or previous video tail)");
+      if (!v.lastFrame) missing.push("last_frame");
+      readiness.push({ shotId: shot.id, sequence: shot.sequence, reason: `missing required frames: ${missing.join(", ")}` });
       canUsePreviousVideoTail = false;
     }
   }
@@ -296,6 +314,7 @@ export async function handleBatchVideoGenerate(
     return NextResponse.json({
       results: [],
       message: "No eligible shots",
+      readiness,
       diagnostic: {
         code: "PIPE_009",
         severity: "warning",
@@ -316,16 +335,35 @@ export async function handleBatchVideoGenerate(
   const videoSlots = await resolveSlotContents("video_generate", { userId, projectId });
 
   const results: Array<{ shotId: string; sequence: number; status: "ok" | "error"; videoUrl?: string; error?: string; diagnostic?: { code: string; severity: "info" | "warning" | "error"; message: string; fix: string } }> = [];
+  let doneCount = 0;
+  const total = eligible.length;
   const promptFamily = inferVideoPromptFamily(modelConfig);
   const scriptSource = episodeId
     ? await db.select({ script: episodes.script, idea: episodes.idea }).from(episodes).where(eq(episodes.id, episodeId))
     : await db.select({ script: projects.script, idea: projects.idea }).from(projects).where(eq(projects.id, projectId));
   const visualStyle = buildVisualStyleContext(scriptSource[0]?.script || "", scriptSource[0]?.idea || "");
+
+  // ── Task cancellation support ──
+  let taskSignal: AbortSignal | undefined;
+  if (taskId) {
+    taskSignal = registerTask(taskId).signal;
+  }
+
+  const generationId = genId();
+
   let propagatedFirstFrame: string | null = null;
   let propagatedFromShotId: string | null = null;
   let propagatedEndDesc: string | null = null;
   for (const shot of eligible) {
       try {
+        if (taskSignal?.aborted) {
+          const skipped = eligible.filter((s) => s.sequence >= shot.sequence);
+          for (const s of skipped) {
+            results.push({ shotId: s.id, sequence: s.sequence, status: "cancelled" } as any);
+          }
+          break;
+        }
+
         const shotLegacy = allShotsLegacy.get(shot.id);
         const firstFrameForVideo = !is4Grid && propagatedFirstFrame
           ? propagatedFirstFrame
@@ -339,6 +377,7 @@ export async function handleBatchVideoGenerate(
             prompt: shotLegacy?.startFrameDesc ?? "",
             fileUrl: propagatedFirstFrame,
             status: "completed",
+            generationId,
             meta: {
               source: "previous_video_tail",
               previousShotId: propagatedFromShotId,
@@ -430,6 +469,7 @@ export async function handleBatchVideoGenerate(
             prompt: shotLegacy?.endFrameDesc ?? "",
             fileUrl: tailFramePath,
             status: "completed",
+            generationId,
             meta: {
               source: "video_tail",
               videoPath,
@@ -444,20 +484,24 @@ export async function handleBatchVideoGenerate(
 
         await insertAssetVersion({
           shotId: shot.id, type: "keyframe_video", sequenceInType: 0,
-          prompt: videoPrompt, fileUrl: videoPath, status: "completed",
+          prompt: videoPrompt, fileUrl: videoPath, status: "completed", generationId,
         });
         await db
           .update(shots)
           .set({ status: "completed" })
           .where(eq(shots.id, shot.id));
 
+        doneCount++;
         console.log(`[BatchVideoGenerate] Shot ${shot.sequence} completed`);
+        if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
         results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", videoUrl: videoPath });
       } catch (err) {
+        doneCount++;
         propagatedFirstFrame = null;
         propagatedFromShotId = null;
         console.error(`[BatchVideoGenerate] Error for shot ${shot.sequence}:`, err);
         await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shot.id));
+        if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed: [...results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean), shot.id] });
         results.push({
           shotId: shot.id,
           sequence: shot.sequence,
@@ -473,5 +517,6 @@ export async function handleBatchVideoGenerate(
       }
   }
 
+  if (taskId) completeTask(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
   return NextResponse.json({ results });
 }

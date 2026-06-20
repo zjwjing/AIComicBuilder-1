@@ -333,6 +333,8 @@ describe("network error", () => {
 
 describe("poll timeout", () => {
   it("throws after max retries when poll never completes", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.useFakeTimers();
     vi.stubGlobal("AbortSignal", { timeout: () => new AbortController().signal });
     vi.stubGlobal("fetch", vi.fn((url: string) => {
@@ -346,6 +348,8 @@ describe("poll timeout", () => {
     await vi.advanceTimersByTimeAsync(1_800_000);
     await expect(promise).rejects.toThrow("WanVideo generation timed out after 30 minutes");
     vi.useRealTimers();
+    (console.log as ReturnType<typeof vi.spyOn>).mockRestore();
+    (console.warn as ReturnType<typeof vi.spyOn>).mockRestore();
   });
 });
 

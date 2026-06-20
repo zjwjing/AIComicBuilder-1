@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY } from "@/lib/config/defaults";
-import { shots, characters, episodeCharacters, projects } from "@/lib/db/schema";
+import { shots, characters, episodeCharacters, projects, scenes } from "@/lib/db/schema";
 import { eq, and, asc, inArray } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -12,8 +12,14 @@ import {
   getEpisodeCharacters,
   collectStoryboardEditReferences,
 } from "@/lib/generate-utils";
-import { resolveImageProvider } from "@/lib/ai/provider-factory";
+import { resolveImageProvider, resolveAIProvider } from "@/lib/ai/provider-factory";
 import { resolveSlotContents } from "@/lib/ai/prompts/resolver";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { registerTask } from "@/lib/task-registry";
+import { checkContinuity } from "@/lib/pipeline/continuity-check";
+import { findCharacterBySemanticMatch, findCharacterByNameFuzzy, findCharacterByDescriptionMatch } from "@/lib/vector-search";
+import { id as genId } from "@/lib/id";
+import { buildPanelInputs } from "@/lib/panel-layout-templates";
 import {
   buildFirstFramePrompt,
   buildLastFramePrompt,
@@ -99,10 +105,11 @@ async function upsertGeneratedAsset(params: {
   prompt: string;
   fileUrl: string;
   characters?: string[];
+  generationId?: string;
 }) {
   const existing = await getActiveAsset(params.shotId, params.type, 0);
   if (existing) {
-    await patchAsset(existing.id, { prompt: params.prompt, fileUrl: params.fileUrl, status: "completed" });
+    await patchAsset(existing.id, { prompt: params.prompt, fileUrl: params.fileUrl, status: "completed", generationId: params.generationId ?? null });
   } else {
     await insertAssetVersion({
       shotId: params.shotId,
@@ -112,6 +119,7 @@ async function upsertGeneratedAsset(params: {
       fileUrl: params.fileUrl,
       status: "completed",
       characters: params.characters,
+      generationId: params.generationId,
     });
   }
 }
@@ -121,7 +129,8 @@ export async function handleBatchFrameGenerate(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   if (!modelConfig?.image) {
     return NextResponse.json(
@@ -153,6 +162,32 @@ export async function handleBatchFrameGenerate(
   const is4Grid = generationMode === "4grid";
   const chainContinuity = payload?.chainContinuity === true && !is4Grid;
 
+  const force = payload?.force === true;
+  if (!force) {
+    const blocked = allShots.filter((s) => {
+      const v = allShotsLegacy.get(s.id);
+      const missing: string[] = [];
+      if (!s.prompt?.trim()) missing.push("shot_prompt");
+      if (!is4Grid) {
+        if (!v?.startFrameDesc) missing.push("first_frame_prompt");
+        if (!v?.endFrameDesc) missing.push("last_frame_prompt");
+      }
+      if (missing.length > 0) {
+        diagnosticError("PIPE_011", `Shot #${s.sequence} has missing prerequisites`, missing.join(", "));
+      }
+      return missing.length > 0;
+    });
+    if (blocked.length > 0) {
+      const shotList = blocked.map((s) => `#${s.sequence}`).join(", ");
+      return NextResponse.json(
+        diagnosticError("PIPE_011", `${blocked.length} shot(s) blocked`, `Missing prerequisites for: ${shotList}. Use "force":true to override.`),
+        { status: 400 }
+      );
+    }
+  }
+
+  const generationId = payload?.generationId as string ?? genId();
+
   const versionedUploadDir = batchVersionId
     ? await getVersionedUploadDir(batchVersionId)
     : process.env.UPLOAD_DIR || "./uploads";
@@ -171,13 +206,21 @@ export async function handleBatchFrameGenerate(
     frameCharacters = await db.select().from(characters).where(eq(characters.projectId, projectId));
   }
 
-  const characterDescriptions = frameCharacters
-    .map((c) => `${c.name}: ${c.description}`)
-    .join("\n");
-
   const charsWithImages = frameCharacters.filter((c) => c.referenceImage);
 
   const ai = resolveImageProvider(modelConfig, versionedUploadDir);
+
+  // ── Task cancellation support ──
+  let taskSignal: AbortSignal | undefined;
+  if (taskId) {
+    taskSignal = registerTask(taskId).signal;
+  }
+
+  // ── Load scene context for consistency ──
+  const episodeScenes = episodeId
+    ? await db.select().from(scenes).where(and(eq(scenes.episodeId, episodeId), eq(scenes.projectId, projectId))).orderBy(asc(scenes.sequence))
+    : [];
+
   const results: Array<{
     shotId: string;
     sequence: number;
@@ -190,6 +233,7 @@ export async function handleBatchFrameGenerate(
   }> = [];
 
   const overwrite = payload?.overwrite === true;
+
   let firstKeyframeShotNeedsFirstFrame = false;
   const needProcess = allShots.filter((s) => {
     const v = allShotsLegacy.get(s.id);
@@ -215,6 +259,11 @@ export async function handleBatchFrameGenerate(
   let doneCount = 0;
   let generatedFirstFrameForChain = false;
   console.log(`[BatchFrameGenerate] Starting serial generation: 0/${total}`);
+
+  // ── Shot memory buffer (temporal continuity) ──
+  // Tracks the previous shot's last frame and matched characters so subsequent
+  // shots can reference them for visual consistency across cuts.
+  let prevLastFramePath: string | undefined;
 
   for (const shot of allShots) {
     const shotLegacy = allShotsLegacy.get(shot.id);
@@ -243,6 +292,14 @@ export async function handleBatchFrameGenerate(
 
     const startTime = Date.now();
     try {
+      if (taskSignal?.aborted) {
+        const skipped = allShots.filter((s) => s.sequence > shot.sequence);
+        for (const s of skipped) {
+          results.push({ shotId: s.id, sequence: s.sequence, status: "cancelled" });
+        }
+        break;
+      }
+
       await db.update(shots).set({ status: "generating" }).where(eq(shots.id, shot.id));
 
       // Per-shot character filter: read the first_frame / last_frame asset
@@ -255,9 +312,49 @@ export async function handleBatchFrameGenerate(
         ...(ffAssetExisting?.characters ?? []),
         ...(lfAssetExisting?.characters ?? []),
       ]);
-      const filteredChars = (shotCharNameSet.size > 0
-        ? charsWithImages.filter((c) => shotCharNameSet.has(c.name))
-        : charsWithImages).slice(0, 6);
+      let filteredChars: typeof charsWithImages = [];
+      if (shotCharNameSet.size > 0) {
+        filteredChars = charsWithImages.filter((c) => shotCharNameSet.has(c.name));
+        if (filteredChars.length === 0 && shot.prompt) {
+          const semanticMatch = await findCharacterBySemanticMatch(shot.prompt, projectId);
+          if (semanticMatch) {
+            const found = charsWithImages.find((c) => c.id === semanticMatch.contentId && c.referenceImage);
+            if (found) filteredChars = [found];
+          } else {
+            const fuzzyMatch = findCharacterByNameFuzzy(
+              [...shotCharNameSet],
+              charsWithImages.map((c) => ({ id: c.id, name: c.name })),
+            );
+            if (fuzzyMatch) {
+              const found = charsWithImages.find((c) => c.id === fuzzyMatch.id && c.referenceImage);
+              if (found) filteredChars = [found];
+            } else {
+              const descMatch = findCharacterByDescriptionMatch(shot.prompt, charsWithImages);
+              if (descMatch) {
+                const found = charsWithImages.find((c) => c.id === descMatch.id && c.referenceImage);
+                if (found) filteredChars = [found];
+              }
+            }
+          }
+        }
+      } else if (charsWithImages.length > 0 && shot.prompt) {
+        const semanticMatch = await findCharacterBySemanticMatch(shot.prompt, projectId);
+        if (semanticMatch) {
+          const found = charsWithImages.find((c) => c.id === semanticMatch.contentId && c.referenceImage);
+          if (found) filteredChars = [found];
+        }
+        if (filteredChars.length === 0) {
+          const descMatch = findCharacterByDescriptionMatch(shot.prompt, charsWithImages);
+          if (descMatch) {
+            const found = charsWithImages.find((c) => c.id === descMatch.id && c.referenceImage);
+            if (found) filteredChars = [found];
+          }
+        }
+      }
+      if (filteredChars.length === 0 && charsWithImages.length > 0) {
+        filteredChars = charsWithImages.slice(0, 1);
+      }
+      filteredChars = filteredChars.slice(0, 3);
       // Prefer the single-portrait ref (auto-cropped from multi-view sheets)
       // for HiDream-O1 keyframe generation. The full multi-view sheet is kept
       // on disk and shown in the UI, but it triggers contact-sheet layout
@@ -274,22 +371,31 @@ export async function handleBatchFrameGenerate(
       const shotCharsForPersist = filteredChars.length > 0 ? filteredChars.map((c) => c.name) : undefined;
       const shotCharDescriptions = filteredChars.length > 0
         ? filteredChars.map((c) => `${c.name}: ${c.description}`).join("\n")
-        : characterDescriptions;
+        : "";
+
+      // ── Scene context injection ──
+      const matchingScene = shot.sceneId ? episodeScenes.find((s) => s.id === shot.sceneId) : null;
+      const sceneContext = matchingScene
+        ? `场景：${matchingScene.title || ""}\n描述：${matchingScene.description || ""}\n光照：${matchingScene.lighting || ""}\n色调：${matchingScene.colorPalette || ""}`
+        : "";
+      const costumeContext = shot.costumeOverrides ? `服装说明：${shot.costumeOverrides}` : "";
+
+      const enrichedSceneDesc = sceneContext
+        ? `${shot.prompt || ""}\n${sceneContext}`
+        : (shot.prompt || "");
+      const enrichedCharDesc = costumeContext
+        ? `${shotCharDescriptions}\n${costumeContext}`
+        : shotCharDescriptions;
 
       if (is4Grid) {
-        const panelInputs = [
-          { type: "panel_1" as const, label: "PANEL 1（开场）", description: shotLegacy?.startFrameDesc || shot.prompt || "" },
-          { type: "panel_2" as const, label: "PANEL 2（发展）", description: shot.prompt || shot.videoScript || "" },
-          { type: "panel_3" as const, label: "PANEL 3（转折）", description: shot.motionScript || shot.videoScript || shot.prompt || "" },
-          { type: "panel_4" as const, label: "PANEL 4（收束）", description: shotLegacy?.endFrameDesc || shot.videoScript || shot.prompt || "" },
-        ];
+        const panelInputs = buildPanelInputs(shot, shotLegacy ?? null, matchingScene ?? null, enrichedCharDesc);
         const generatedPanels: string[] = [];
         for (const panel of panelInputs) {
           const panelPrompt = buildPanelPrompt({
             panelLabel: panel.label,
-            sceneDescription: shot.prompt || "",
+            sceneDescription: enrichedSceneDesc,
             panelDescription: panel.description,
-            characterDescriptions: shotCharDescriptions,
+            characterDescriptions: enrichedCharDesc,
           });
           const panelPath = await ai.generateImage(panelPrompt, {
             ...imageOpts,
@@ -304,6 +410,7 @@ export async function handleBatchFrameGenerate(
             prompt: panel.description,
             fileUrl: panelPath,
             characters: shotCharsForPersist,
+            generationId,
           });
           generatedPanels.push(panelPath);
         }
@@ -314,6 +421,7 @@ export async function handleBatchFrameGenerate(
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         doneCount++;
         console.log(`[BatchFrameGenerate] ✓ 4grid shot ${shot.sequence} (${doneCount}/${total}) ${elapsed}s`);
+        if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
         results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", panels: generatedPanels });
         continue;
       }
@@ -326,9 +434,10 @@ export async function handleBatchFrameGenerate(
       }
       if (shouldGenerateFirstFrame) {
         const firstPrompt = buildFirstFramePrompt({
-          sceneDescription: shot.prompt || "",
+          sceneDescription: enrichedSceneDesc,
           startFrameDesc: shotLegacy?.startFrameDesc || shot.prompt || "",
-          characterDescriptions: shotCharDescriptions,
+          characterDescriptions: enrichedCharDesc,
+          previousLastFrame: prevLastFramePath,
           hasCharacterImageReferences: hasKeyframeImageReferences,
           slotContents: frameFirstSlots,
         });
@@ -341,10 +450,22 @@ export async function handleBatchFrameGenerate(
         if (chainContinuity) generatedFirstFrameForChain = true;
       }
 
+      // ── Continuity check (best-effort, non-blocking) ──
+      if (prevLastFramePath && firstFramePath && firstFramePath !== prevLastFramePath) {
+        const continuityResult = await checkContinuity(
+          resolveAIProvider(modelConfig),
+          prevLastFramePath,
+          firstFramePath,
+        ).catch(() => null);
+        if (continuityResult && !continuityResult.pass) {
+          console.warn(`[BatchFrameGenerate] Continuity issues in shot ${shot.sequence}:`, continuityResult.issues);
+        }
+      }
+
       const lastPrompt = buildLastFramePrompt({
-        sceneDescription: shot.prompt || "",
+        sceneDescription: enrichedSceneDesc,
         endFrameDesc: shotLegacy?.endFrameDesc || shot.prompt || "",
-        characterDescriptions: shotCharDescriptions,
+        characterDescriptions: enrichedCharDesc,
         firstFramePath,
         hasCharacterImageReferences: hasKeyframeImageReferences,
         slotContents: frameLastSlots,
@@ -365,7 +486,7 @@ export async function handleBatchFrameGenerate(
       await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shot.id));
 
       if (shouldGenerateFirstFrame) {
-        if (ffAssetExisting) await patchAsset(ffAssetExisting.id, { fileUrl: firstFramePath, status: "completed" });
+        if (ffAssetExisting) await patchAsset(ffAssetExisting.id, { fileUrl: firstFramePath, status: "completed", generationId });
         else
           await insertAssetVersion({
             shotId: shot.id,
@@ -375,9 +496,10 @@ export async function handleBatchFrameGenerate(
             fileUrl: firstFramePath,
             status: "completed",
             characters: shotCharsForPersist,
+            generationId,
           });
       }
-      if (lfAssetExisting) await patchAsset(lfAssetExisting.id, { fileUrl: lastFramePath, status: "completed" });
+      if (lfAssetExisting) await patchAsset(lfAssetExisting.id, { fileUrl: lastFramePath, status: "completed", generationId });
       else
         await insertAssetVersion({
           shotId: shot.id,
@@ -387,11 +509,15 @@ export async function handleBatchFrameGenerate(
           fileUrl: lastFramePath,
           status: "completed",
           characters: shotCharsForPersist,
+          generationId,
         });
+
+      prevLastFramePath = lastFramePath;
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       doneCount++;
       console.log(`[BatchFrameGenerate] ✓ shot ${shot.sequence} (${doneCount}/${total}) ${elapsed}s`);
+      if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
 
       results.push({
         shotId: shot.id,
@@ -405,6 +531,7 @@ export async function handleBatchFrameGenerate(
       doneCount++;
       console.error(`[BatchFrameGenerate] ✗ shot ${shot.sequence} (${doneCount}/${total}) ${elapsed}s:`, err);
       await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shot.id));
+      if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed: [...results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean), shot.id] });
       results.push({
         shotId: shot.id,
         sequence: shot.sequence,
@@ -421,7 +548,13 @@ export async function handleBatchFrameGenerate(
 
   const okCount = results.filter((r) => r.status === "ok").length;
   const errCount = results.filter((r) => r.status === "error").length;
-  console.log(`[BatchFrameGenerate] Done: ${okCount} ok, ${errCount} errors, ${skipCount} skipped`);
+  const cancelledCount = results.filter((r) => r.status === "cancelled").length;
+  console.log(`[BatchFrameGenerate] Done: ${okCount} ok, ${errCount} errors, ${cancelledCount} cancelled, ${skipCount} skipped`);
+
+  if (taskId && cancelledCount === 0) {
+    if (errCount > 0) completeTask(taskId, { total, completed: okCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
+    else completeTask(taskId, { total, completed: okCount, failed: [] });
+  }
 
   return NextResponse.json({ results });
 }
@@ -465,13 +598,10 @@ export async function handleSingleFrameGenerate(
   const startFramePromptText = ffAsset?.prompt || shot.prompt || "";
   const endFramePromptText = lfAsset?.prompt || shot.prompt || "";
 
+  const generationId = genId();
   const versionedUploadDir = await getVersionedUploadDir(shot.versionId);
   const shotEpisodeId = episodeId || shot.episodeId;
   const projectCharacters = await getEpisodeCharacters(projectId, shotEpisodeId);
-
-  const allCharDescriptions = projectCharacters
-    .map((c) => `${c.name}: ${c.description}`)
-    .join("\n");
 
   // Per-shot character filter: only inject refs for characters declared
   // on the first_frame / last_frame asset metadata for this shot.
@@ -479,9 +609,52 @@ export async function handleSingleFrameGenerate(
     ...(ffAsset?.characters ?? []),
     ...(lfAsset?.characters ?? []),
   ]);
-  const filteredChars = (shotCharNameSet.size > 0
-    ? projectCharacters.filter((c) => c.referenceImage && shotCharNameSet.has(c.name))
-    : projectCharacters.filter((c) => c.referenceImage)).slice(0, 6);
+  const charsWithRefs = projectCharacters.filter((c) => c.referenceImage);
+  let filteredChars: typeof charsWithRefs = [];
+  if (shotCharNameSet.size > 0) {
+    filteredChars = charsWithRefs.filter((c) => shotCharNameSet.has(c.name));
+    if (filteredChars.length === 0 && (shot.prompt || startFramePromptText)) {
+      const searchText = shot.prompt || startFramePromptText;
+      const semanticMatch = await findCharacterBySemanticMatch(searchText, projectId);
+      if (semanticMatch) {
+        const found = charsWithRefs.find((c) => c.id === semanticMatch.contentId);
+        if (found) filteredChars = [found];
+      } else {
+        const fuzzyMatch = findCharacterByNameFuzzy(
+          [...shotCharNameSet],
+          charsWithRefs.map((c) => ({ id: c.id, name: c.name })),
+        );
+        if (fuzzyMatch) {
+          const found = charsWithRefs.find((c) => c.id === fuzzyMatch.id);
+          if (found) filteredChars = [found];
+        } else {
+          const descMatch = findCharacterByDescriptionMatch(searchText, charsWithRefs);
+          if (descMatch) {
+            const found = charsWithRefs.find((c) => c.id === descMatch.id);
+            if (found) filteredChars = [found];
+          }
+        }
+      }
+    }
+  } else if (charsWithRefs.length > 0 && (shot.prompt || startFramePromptText)) {
+    const searchText = shot.prompt || startFramePromptText;
+    const semanticMatch = await findCharacterBySemanticMatch(searchText, projectId);
+    if (semanticMatch) {
+      const found = charsWithRefs.find((c) => c.id === semanticMatch.contentId);
+      if (found) filteredChars = [found];
+    }
+    if (filteredChars.length === 0) {
+      const descMatch = findCharacterByDescriptionMatch(searchText, charsWithRefs);
+      if (descMatch) {
+        const found = charsWithRefs.find((c) => c.id === descMatch.id);
+        if (found) filteredChars = [found];
+      }
+    }
+  }
+  if (filteredChars.length === 0 && charsWithRefs.length > 0) {
+    filteredChars = charsWithRefs.slice(0, 1);
+  }
+  filteredChars = filteredChars.slice(0, 3);
   // Prefer the auto-cropped single portrait over the full multi-view sheet
   // when available — HiDream-O1 multi-reference treats the layout as a
   // template to replicate rather than as identity information.
@@ -496,7 +669,23 @@ export async function handleSingleFrameGenerate(
   const hasKeyframeImageReferences = (keyframeReferenceInputs.referenceImages?.length ?? 0) > 0;
   const shotCharDescriptions = filteredChars.length > 0
     ? filteredChars.map((c) => `${c.name}: ${c.description}`).join("\n")
-    : allCharDescriptions;
+    : "";
+
+  // ── Scene + costume context ──
+  const epId = shot.episodeId ?? episodeId;
+  const episodeScenes = epId
+    ? await db.select().from(scenes).where(and(eq(scenes.episodeId, epId), eq(scenes.projectId, projectId)))
+    : [];
+  const matchingScene = shot.sceneId ? episodeScenes.find((s) => s.id === shot.sceneId) : null;
+  const sceneContext = matchingScene
+    ? `场景：${matchingScene.title || ""}\n描述：${matchingScene.description || ""}\n光照：${matchingScene.lighting || ""}\n色调：${matchingScene.colorPalette || ""}`
+    : "";
+  const enrichedSceneDesc = sceneContext
+    ? `${shot.prompt || ""}\n${sceneContext}`
+    : (shot.prompt || "");
+  const enrichedCharDesc = shot.costumeOverrides
+    ? `${shotCharDescriptions}\n服装说明：${shot.costumeOverrides}`
+    : shotCharDescriptions;
 
   const ai = resolveImageProvider(modelConfig, versionedUploadDir);
   const imageOpts = ratioToImageOpts(payload?.ratio as string | undefined);
@@ -508,19 +697,14 @@ export async function handleSingleFrameGenerate(
     await db.update(shots).set({ status: "generating" }).where(eq(shots.id, shotId));
 
     if (is4Grid) {
-      const panelInputs = [
-        { type: "panel_1" as const, label: "PANEL 1（开场）", description: shotLegacy.startFrameDesc || shot.prompt || "" },
-        { type: "panel_2" as const, label: "PANEL 2（发展）", description: shot.prompt || shot.videoScript || "" },
-        { type: "panel_3" as const, label: "PANEL 3（转折）", description: shot.motionScript || shot.videoScript || shot.prompt || "" },
-        { type: "panel_4" as const, label: "PANEL 4（收束）", description: shotLegacy.endFrameDesc || shot.videoScript || shot.prompt || "" },
-      ];
+      const panelInputs = buildPanelInputs(shot, shotLegacy, matchingScene ?? null, enrichedCharDesc);
       const generatedPanels: string[] = [];
       for (const panel of panelInputs) {
         const panelPrompt = buildPanelPrompt({
           panelLabel: panel.label,
-          sceneDescription: shot.prompt || "",
+          sceneDescription: enrichedSceneDesc,
           panelDescription: panel.description,
-          characterDescriptions: shotCharDescriptions,
+          characterDescriptions: enrichedCharDesc,
         });
         const panelPath = await ai.generateImage(panelPrompt, {
           ...imageOpts,
@@ -534,6 +718,7 @@ export async function handleSingleFrameGenerate(
           type: panel.type,
           prompt: panel.description,
           fileUrl: panelPath,
+          generationId,
         });
         generatedPanels.push(panelPath);
       }
@@ -579,7 +764,7 @@ export async function handleSingleFrameGenerate(
 
     await db.update(shots).set({ status: "completed" }).where(eq(shots.id, shotId));
 
-    if (ffAsset) await patchAsset(ffAsset.id, { fileUrl: firstFramePath, status: "completed" });
+    if (ffAsset) await patchAsset(ffAsset.id, { fileUrl: firstFramePath, status: "completed", generationId });
     else
       await insertAssetVersion({
         shotId,
@@ -588,8 +773,9 @@ export async function handleSingleFrameGenerate(
         prompt: startFramePromptText,
         fileUrl: firstFramePath,
         status: "completed",
+        generationId,
       });
-    if (lfAsset) await patchAsset(lfAsset.id, { fileUrl: lastFramePath, status: "completed" });
+    if (lfAsset) await patchAsset(lfAsset.id, { fileUrl: lastFramePath, status: "completed", generationId });
     else
       await insertAssetVersion({
         shotId,
@@ -598,6 +784,7 @@ export async function handleSingleFrameGenerate(
         prompt: endFramePromptText,
         fileUrl: lastFramePath,
         status: "completed",
+        generationId,
       });
 
     return NextResponse.json({ shotId, firstFrame: firstFramePath, lastFrame: lastFramePath, status: "ok" });
@@ -775,6 +962,7 @@ export async function handleSingleSceneFrame(
           fileUrl: sceneFramePath,
           status: "completed",
           characters: siblingChars,
+          generationId: genId(),
         });
       }
     }
@@ -807,9 +995,13 @@ export async function handleBatchSceneFrame(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
+  if (taskId) updateTaskProgress(taskId, { total: 0, completed: 0, failed: [] });
   if (!modelConfig?.image) {
+    if (taskId) completeTask(taskId, { total: 0, completed: 0, failed: ["No image model configured"] });
     return NextResponse.json(
       diagnosticError("PIPE_002", "No image model configured", "Configure modelConfig.image before generating scene frames."),
       { status: 400 },
@@ -825,6 +1017,7 @@ export async function handleBatchSceneFrame(
   if (batchVersionId) shotWhereConditions.push(eq(shots.versionId, batchVersionId));
   if (episodeId) shotWhereConditions.push(eq(shots.episodeId, episodeId));
   const allShots = await db.select().from(shots).where(and(...shotWhereConditions)).orderBy(asc(shots.sequence));
+  if (taskId) updateTaskProgress(taskId, { total: allShots.length, completed: 0, failed: [] });
 
   const versionedUploadDir = batchVersionId
     ? await getVersionedUploadDir(batchVersionId)
@@ -843,7 +1036,8 @@ export async function handleBatchSceneFrame(
     diagnostic?: ReturnType<typeof buildPipelineDiagnostic>;
   }> = [];
 
-  for (const shot of allShots) {
+  for (const [shotIdx, shot] of allShots.entries()) {
+    if (taskSignal?.aborted) { if (taskId) completeTask(taskId, { total: allShots.length, completed: shotIdx, failed: ["Cancelled"] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
     const refImages = allShotsLegacy.get(shot.id)?.referenceImages ?? [];
     const targets = overwrite
       ? refImages.filter((r) => r.prompt.trim())
@@ -851,6 +1045,7 @@ export async function handleBatchSceneFrame(
 
     if (targets.length === 0) {
       results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", generated: 0 });
+      if (taskId) updateTaskProgress(taskId, { total: allShots.length, completed: shotIdx + 1, failed: results.filter(r => r.status === "error").map(r => r.shotId) });
       continue;
     }
 
@@ -861,6 +1056,7 @@ export async function handleBatchSceneFrame(
     // Generate all ref images for this shot serially.
     let generated = 0;
     for (const entry of targets) {
+      if (taskSignal?.aborted) { if (taskId) completeTask(taskId, { total: allShots.length, completed: shotIdx, failed: ["Cancelled"] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
       try {
         const imagePath = await imageProvider.generateImage(entry.prompt, {
           quality: DEFAULT_IMAGE_QUALITY,
@@ -870,6 +1066,7 @@ export async function handleBatchSceneFrame(
           shotId: shot.id, type: "reference", sequenceInType: entry.sequenceInType,
           prompt: entry.prompt, fileUrl: imagePath, status: "completed",
           characters: entry.characters ?? undefined,
+          generationId: genId(),
         });
         generated++;
         console.log(`[BatchRefImage] Shot ${shot.sequence}: ref "${entry.id}" done`);
@@ -896,7 +1093,9 @@ export async function handleBatchSceneFrame(
       .where(eq(shots.id, shot.id));
 
     results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", generated });
+    if (taskId) updateTaskProgress(taskId, { total: allShots.length, completed: shotIdx + 1, failed: results.filter(r => r.status === "error").map(r => r.shotId) });
   }
 
+  if (taskId) completeTask(taskId, { total: allShots.length, completed: results.filter(r => r.status === "ok").length, failed: results.filter(r => r.status === "error").map(r => r.error!).filter(Boolean) });
   return NextResponse.json({ results });
 }

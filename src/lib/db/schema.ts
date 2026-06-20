@@ -178,6 +178,7 @@ export const shotAssets = sqliteTable("shot_assets", {
   modelProvider: text("model_provider"),
   modelId: text("model_id"),
   meta: text("meta"), // JSON
+  generationId: text("generation_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -382,7 +383,7 @@ export const tasks = sqliteTable("tasks", {
     ],
   }).notNull(),
   status: text("status", {
-    enum: ["pending", "running", "completed", "failed"],
+    enum: ["pending", "running", "completed", "failed", "cancelled"],
   })
     .notNull()
     .default("pending"),
@@ -417,6 +418,20 @@ export const agents = sqliteTable("agents", {
     .notNull()
     .$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const embeddings = sqliteTable("embeddings", {
+  id: text("id").primaryKey(),
+  contentType: text("content_type", {
+    enum: ["character", "shot", "scene", "episode"],
+  }).notNull(),
+  contentId: text("content_id").notNull(),
+  model: text("model").notNull(),
+  vector: text("vector").notNull(),
+  text: text("text").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
 });

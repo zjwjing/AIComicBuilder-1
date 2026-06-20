@@ -19,7 +19,7 @@ export async function apiFetch(url: string, options: RequestInit & { timeout?: n
   let response: Response;
   try {
     const controller = new AbortController();
-    const timeoutMs = options.timeout ?? 300_000;
+    const timeoutMs = options.timeout ?? 600_000;
     const timeout = setTimeout(() => controller.abort(new DOMException("Timeout", "TimeoutError")), timeoutMs);
     try {
       response = await fetch(url, { ...options, headers, signal: options.signal || controller.signal });

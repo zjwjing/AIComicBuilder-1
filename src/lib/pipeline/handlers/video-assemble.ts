@@ -7,9 +7,15 @@ import { DEFAULT_SHOT_DURATION } from "@/lib/config/defaults";
 import { assembleVideo } from "@/lib/video/ffmpeg";
 import { loadShotLegacyViewsBatch } from "@/lib/shot-asset-utils";
 import { generateDialogueAudio } from "@/lib/audio/tts";
+import { registerTask } from "@/lib/task-registry";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
 
-export async function handleVideoAssembleSync(projectId: string, _userId: string, payload?: Record<string, unknown>, _modelConfig?: ModelConfig, episodeId?: string) {
+export async function handleVideoAssembleSync(projectId: string, _userId: string, payload?: Record<string, unknown>, _modelConfig?: ModelConfig, episodeId?: string, taskId?: string) {
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
+  if (taskId) updateTaskProgress(taskId, { total: 5, completed: 0, failed: [] });
   const generationModeValue = await resolveGenerationMode(projectId, episodeId);
+  if (taskSignal?.aborted) { if (taskId) completeTask(taskId, { total: 0, completed: 0, failed: [] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
+  if (taskId) updateTaskProgress(taskId, { total: 5, completed: 1, failed: [] });
 
   let versionId = payload?.versionId as string | undefined;
 
@@ -44,6 +50,8 @@ export async function handleVideoAssembleSync(projectId: string, _userId: string
     })
     .filter(Boolean) as string[];
 
+  if (taskId) updateTaskProgress(taskId, { total: 5, completed: 2, failed: [] });
+
   if (videoPaths.length === 0) {
     return NextResponse.json({ error: "No video clips to assemble" }, { status: 400 });
   }
@@ -59,6 +67,8 @@ export async function handleVideoAssembleSync(projectId: string, _userId: string
       ? shot.transitionOut
       : (nextShot?.transitionIn || "cut")) as TransitionType;
   });
+
+  if (taskId) updateTaskProgress(taskId, { total: 5, completed: 3, failed: [] });
 
   const allSubtitles: {
     text: string;
@@ -112,7 +122,9 @@ export async function handleVideoAssembleSync(projectId: string, _userId: string
   }
 
   const dialogueAudio: { path: string; startTime: number; endTime: number }[] = [];
-  for (const sub of allSubtitles) {
+  for (let ai = 0; ai < allSubtitles.length; ai++) {
+    if (taskSignal?.aborted) { break; }
+    const sub = allSubtitles[ai];
     const shotIdx = sub.shotSequence - 1;
     if (shotIdx < 0 || shotIdx >= shotDurations.length) continue;
     const shotStart = shotStartTimes[shotIdx];
@@ -132,8 +144,10 @@ export async function handleVideoAssembleSync(projectId: string, _userId: string
       dialogueAudio.push({ path: audio.path, startTime, endTime: clipEnd });
     }
   }
+  if (taskSignal?.aborted) { if (taskId) completeTask(taskId, { total: 0, completed: 0, failed: [] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
 
   try {
+    if (taskId) updateTaskProgress(taskId, { total: 5, completed: 4, failed: [] });
     const result = await assembleVideo({
       videoPaths,
       subtitles: [], // no subtitles per user request
@@ -155,10 +169,13 @@ export async function handleVideoAssembleSync(projectId: string, _userId: string
         .where(eq(projects.id, projectId));
     }
 
+    if (taskId) completeTask(taskId, { total: 5, completed: 5, failed: [] });
     console.log(`[VideoAssemble] Completed: ${result.videoPath}`);
     return NextResponse.json({ outputPath: result.videoPath, srtPath: result.srtPath, status: "ok" });
   } catch (err) {
+    const msg = extractErrorMessage(err);
+    if (taskId) completeTask(taskId, { total: 5, completed: 4, failed: [msg] });
     console.error("[VideoAssemble] Error:", err);
-    return NextResponse.json({ status: "error", error: extractErrorMessage(err) }, { status: 500 });
+    return NextResponse.json({ status: "error", error: msg }, { status: 500 });
   }
 }

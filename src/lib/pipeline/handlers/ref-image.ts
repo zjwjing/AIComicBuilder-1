@@ -21,6 +21,9 @@ import {
   loadShotLegacyViewsBatch,
   insertAssetVersion,
 } from "@/lib/shot-asset-utils";
+import { id as genId } from "@/lib/id";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { registerTask } from "@/lib/task-registry";
 
 export async function handleSingleRefImageGenerate(
   projectId: string,
@@ -84,6 +87,7 @@ export async function handleSingleRefImageGenerate(
       shotId, type: "reference", sequenceInType: entry.sequenceInType,
       prompt: entry.prompt, fileUrl: imagePath, status: "completed",
       characters: entry.characters ?? undefined,
+      generationId: genId(),
     });
 
     return NextResponse.json({ ok: true, imagePath });
@@ -109,7 +113,8 @@ export async function handleGenerateRefPrompts(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   // === 智能体路由 ===
   const rpBoundAgent = await findBoundAgent(projectId, "ref_image_prompts");
@@ -152,6 +157,7 @@ export async function handleGenerateRefPrompts(
         const scenes = entry.scenes as Array<{ name?: string; prompt?: string }> | undefined;
         const chars = Array.isArray(entry.characters) ? entry.characters as string[] : [];
 
+        const agentRefGenId = genId();
         if (Array.isArray(scenes)) {
           for (let i = 0; i < scenes.length; i++) {
             const scenePrompt = scenes[i].prompt || "";
@@ -163,6 +169,7 @@ export async function handleGenerateRefPrompts(
                 prompt: scenePrompt,
                 status: "pending",
                 characters: chars,
+                generationId: agentRefGenId,
               });
               savedCount++;
             }
@@ -228,9 +235,12 @@ export async function handleGenerateRefPrompts(
   const total = allShots.length;
   let doneCount = 0;
   let updatedCount = 0;
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
+  if (taskId) updateTaskProgress(taskId, { total, completed: 0, failed: [] });
   console.log(`[GenerateRefPrompts] Starting serial generation: 0/${total}`);
 
   for (const shot of allShots) {
+    if (taskSignal?.aborted) { console.log(`[GenerateRefPrompts] Aborted at shot ${shot.sequence}`); break; }
     try {
       const promptRequest = buildRefImagePromptsRequest(
         [{
@@ -266,6 +276,7 @@ export async function handleGenerateRefPrompts(
       }
 
       const charsForShot = Array.isArray(entry.characters) ? entry.characters : [];
+      const promptGenId = genId();
       let sceneIdx = 0;
       for (const scene of entry.scenes) {
         if (scene.prompt) {
@@ -276,6 +287,7 @@ export async function handleGenerateRefPrompts(
             prompt: scene.prompt,
             status: "pending",
             characters: charsForShot,
+            generationId: promptGenId,
           });
           sceneIdx++;
         }
@@ -288,8 +300,9 @@ export async function handleGenerateRefPrompts(
       console.warn(`[GenerateRefPrompts] ✗ shot ${shot.sequence} (${doneCount}/${total}): ${String(err)}`);
     }
   }
-
   console.log(`[GenerateRefPrompts] Updated ${updatedCount}/${allShots.length} shots (serial)`);
+  if (taskId) completeTask(taskId, { total, completed: doneCount, failed: allShots.filter((_, i) => i >= doneCount - (total - doneCount)).slice(0, total - doneCount).map((s) => s.id) });
+
   return NextResponse.json({ updatedCount, totalShots: allShots.length });
 }
 
@@ -298,7 +311,8 @@ export async function handleBatchRefImageGenerate(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   if (!modelConfig?.image) {
     return NextResponse.json({ error: "No image model configured" }, { status: 400 });
@@ -329,8 +343,11 @@ export async function handleBatchRefImageGenerate(
   }
 
   const results: Array<{ shotId: string; sequence: number; status: string; generated: number; failed: number }> = [];
+  const taskSignal = taskId ? registerTask(taskId).signal : undefined;
+  if (taskId) updateTaskProgress(taskId, { total: allShots.length, completed: 0, failed: [] });
 
   for (const shot of allShots) {
+    if (taskSignal?.aborted) { console.log(`[BatchRefImageGenerate] Aborted at shot ${shot.sequence}`); break; }
     const refImages = allShotsLegacy.get(shot.id)?.referenceImages ?? [];
     const targets = overwrite
       ? refImages.filter((r) => r.prompt.trim())
@@ -370,6 +387,7 @@ export async function handleBatchRefImageGenerate(
           shotId: shot.id, type: "reference", sequenceInType: entry.sequenceInType,
           prompt: entry.prompt, fileUrl: imagePath, status: "completed",
           characters: entry.characters ?? undefined,
+          generationId: genId(),
         });
         generated++;
         console.log(`[BatchRefImageGenerate] Shot ${shot.sequence}: ref done`);
@@ -382,8 +400,10 @@ export async function handleBatchRefImageGenerate(
     await db.update(shots).set({ status: "pending" }).where(eq(shots.id, shot.id));
 
     results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", generated, failed });
+    if (taskId) updateTaskProgress(taskId, { total: allShots.length, completed: results.length, failed: results.filter(r => r.generated === 0 && r.failed > 0).map(r => r.shotId) });
   }
 
+  if (taskId) completeTask(taskId, { total: allShots.length, completed: results.length, failed: results.filter(r => r.generated === 0 && r.failed > 0).map(r => r.shotId) });
   return NextResponse.json({ results });
 }
 
@@ -456,6 +476,7 @@ export async function handleSingleShotRefImageGenerateAll(
         shotId: shot.id, type: "reference", sequenceInType: entry.sequenceInType,
         prompt: entry.prompt, fileUrl: imagePath, status: "completed",
         characters: entry.characters ?? undefined,
+        generationId: genId(),
       });
       generated++;
       console.log(`[SingleShotRefImageAll] Shot ${shot.sequence}: ref "${entry.id}" done`);

@@ -45,6 +45,7 @@ export interface ShotAssetRow {
   modelProvider: string | null;
   modelId: string | null;
   meta: Record<string, unknown> | null;
+  generationId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -64,6 +65,7 @@ function rowToAsset(row: typeof shotAssets.$inferSelect): ShotAssetRow {
     modelProvider: row.modelProvider,
     modelId: row.modelId,
     meta: row.meta ? JSON.parse(row.meta) : null,
+    generationId: row.generationId ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -140,6 +142,7 @@ export interface UpsertAssetInput {
   modelProvider?: string | null;
   modelId?: string | null;
   meta?: Record<string, unknown> | null;
+  generationId?: string | null;
 }
 
 /**
@@ -218,6 +221,7 @@ export async function insertAssetVersion(
     modelProvider: input.modelProvider ?? null,
     modelId: input.modelId ?? null,
     meta: resolvedMeta,
+    generationId: input.generationId ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -236,6 +240,7 @@ export async function patchAsset(
     modelProvider: string | null;
     modelId: string | null;
     meta: Record<string, unknown> | null;
+    generationId: string | null;
   }>
 ): Promise<void> {
   const update: Record<string, unknown> = { updatedAt: new Date() };
@@ -247,6 +252,8 @@ export async function patchAsset(
   if (patch.modelId !== undefined) update.modelId = patch.modelId;
   if (patch.meta !== undefined)
     update.meta = patch.meta ? JSON.stringify(patch.meta) : null;
+  if (patch.generationId !== undefined)
+    update.generationId = patch.generationId;
   await db.update(shotAssets).set(update).where(eq(shotAssets.id, assetId));
 }
 

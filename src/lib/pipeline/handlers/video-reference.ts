@@ -26,6 +26,9 @@ import {
   loadShotLegacyViewsBatch,
   insertAssetVersion,
 } from "@/lib/shot-asset-utils";
+import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { registerTask } from "@/lib/task-registry";
+import { id as genId } from "@/lib/id";
 
 const POSITIVE_SAFETY_SUFFIX =
   "人物穿着完整日常服饰，衣摆严谨不暴露，领口规整无大面积露肤。只拍中近景、上半身镜头，不拍贴身暧昧姿态，肢体动作端庄自然。人物举止大方得体，无刻意魅惑、弯腰低身走光类动作。画面风格正经写实，偏向生活叙事、古风剧情、日常氛围，拒绝暧昧私密氛围。";
@@ -215,7 +218,7 @@ export async function handleSingleReferenceVideo(
 
     await insertAssetVersion({
       shotId, type: "reference_video", sequenceInType: 0,
-      prompt: videoPrompt, fileUrl: result.filePath, status: "completed",
+      prompt: videoPrompt, fileUrl: result.filePath, status: "completed", generationId: genId(),
       meta: result.lastFrameUrl ? { lastFrameUrl: result.lastFrameUrl } : null,
     });
     await db
@@ -239,7 +242,8 @@ export async function handleBatchReferenceVideo(
   userId: string,
   payload?: Record<string, unknown>,
   modelConfig?: ModelConfig,
-  episodeId?: string
+  episodeId?: string,
+  taskId?: string
 ) {
   if (!modelConfig?.video) {
     return NextResponse.json({ error: "No video model configured" }, { status: 400 });
@@ -282,12 +286,28 @@ export async function handleBatchReferenceVideo(
 
   const overwrite = payload?.overwrite === true;
   const allShotsLegacy = await loadShotLegacyViewsBatch(allShots.map((s) => s.id));
+
+  // ── Readiness guard ──
+  const readiness: Array<{ shotId: string; sequence: number; reason: string }> = [];
   const eligible = allShots.filter((s) => {
     const v = allShotsLegacy.get(s.id);
-    return s.status !== "generating" && (overwrite || !v?.referenceVideoUrl);
+    if (s.status === "generating") {
+      readiness.push({ shotId: s.id, sequence: s.sequence, reason: "shot is currently generating" });
+      return false;
+    }
+    if (v?.referenceVideoUrl && !overwrite) {
+      readiness.push({ shotId: s.id, sequence: s.sequence, reason: "already has reference video (use overwrite to regenerate)" });
+      return false;
+    }
+    const refImages = v?.referenceImages?.filter((r) => r.fileUrl) ?? [];
+    if (refImages.length === 0 && !v?.sceneRefFrame) {
+      readiness.push({ shotId: s.id, sequence: s.sequence, reason: "missing scene reference images" });
+      return false;
+    }
+    return true;
   });
   if (eligible.length === 0) {
-    return NextResponse.json({ results: [], message: "No eligible shots" });
+    return NextResponse.json({ results: [], message: "No eligible shots", readiness });
   }
 
   const projectCharacters = await getEpisodeCharacters(projectId, episodeId);
@@ -313,9 +333,26 @@ export async function handleBatchReferenceVideo(
     )
   );
 
+  // ── Task cancellation support ──
+  let taskSignal: AbortSignal | undefined;
+  if (taskId) {
+    taskSignal = registerTask(taskId).signal;
+  }
+
+  const generationId = genId();
+
   const results: Array<{ shotId: string; sequence: number; status: "ok" | "error"; referenceVideoUrl?: string; error?: string }> = [];
+  let doneCount = 0;
+  const total = eligible.length;
   for (const shot of eligible) {
     try {
+      if (taskSignal?.aborted) {
+        const skipped = eligible.filter((s) => s.sequence >= shot.sequence);
+        for (const s of skipped) {
+          results.push({ shotId: s.id, sequence: s.sequence, status: "cancelled" } as any);
+        }
+        break;
+      }
       const shotLegacy = allShotsLegacy.get(shot.id)!;
       const effectiveDuration = Math.min(shot.duration ?? DEFAULT_SHOT_DURATION, videoMaxDuration);
       const shotDialogues = await db
@@ -439,7 +476,7 @@ export async function handleBatchReferenceVideo(
 
       await insertAssetVersion({
         shotId: shot.id, type: "reference_video", sequenceInType: 0,
-        prompt: videoPrompt, fileUrl: result.filePath, status: "completed",
+        prompt: videoPrompt, fileUrl: result.filePath, status: "completed", generationId,
         meta: result.lastFrameUrl ? { lastFrameUrl: result.lastFrameUrl } : null,
       });
       await db
@@ -447,14 +484,19 @@ export async function handleBatchReferenceVideo(
         .set({ status: "completed" })
         .where(eq(shots.id, shot.id));
 
+      doneCount++;
       console.log(`[BatchReferenceVideo] Shot ${shot.sequence} completed`);
+      if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
       results.push({ shotId: shot.id, sequence: shot.sequence, status: "ok", referenceVideoUrl: result.filePath });
     } catch (err) {
+      doneCount++;
       console.error(`[BatchReferenceVideo] Error for shot ${shot.sequence}:`, err);
       await db.update(shots).set({ status: "failed" }).where(eq(shots.id, shot.id));
+      if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed: [...results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean), shot.id] });
       results.push({ shotId: shot.id, sequence: shot.sequence, status: "error", error: extractErrorMessage(err) });
     }
   }
 
+  if (taskId) completeTask(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
   return NextResponse.json({ results });
 }
