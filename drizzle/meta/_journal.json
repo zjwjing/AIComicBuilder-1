@@ -393,6 +393,13 @@
       "when": 1750000000000,
       "tag": "0055_add_embeddings",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1750000001000,
+      "tag": "0056_add_generation_id",
+      "breakpoints": true
     }
   ]
 }
