@@ -334,7 +334,7 @@ export async function handleBatchVideoGenerate(
   const videoMaxDuration = getModelMaxDuration(modelConfig?.video?.modelId);
   const videoSlots = await resolveSlotContents("video_generate", { userId, projectId });
 
-  const results: Array<{ shotId: string; sequence: number; status: "ok" | "error"; videoUrl?: string; error?: string; diagnostic?: { code: string; severity: "info" | "warning" | "error"; message: string; fix: string } }> = [];
+  const results: Array<{ shotId: string; sequence: number; status: "ok" | "error" | "cancelled"; videoUrl?: string; error?: string; diagnostic?: { code: string; severity: "info" | "warning" | "error"; message: string; fix: string } }> = [];
   let doneCount = 0;
   const total = eligible.length;
   const promptFamily = inferVideoPromptFamily(modelConfig);
@@ -356,13 +356,13 @@ export async function handleBatchVideoGenerate(
   let propagatedEndDesc: string | null = null;
   for (const shot of eligible) {
       try {
-        if (taskSignal?.aborted) {
-          const skipped = eligible.filter((s) => s.sequence >= shot.sequence);
-          for (const s of skipped) {
-            results.push({ shotId: s.id, sequence: s.sequence, status: "cancelled" } as any);
-          }
-          break;
+      if (taskSignal?.aborted) {
+        const skipped = eligible.filter((s) => s.sequence >= shot.sequence);
+        for (const s of skipped) {
+          results.push({ shotId: s.id, sequence: s.sequence, status: "cancelled" });
         }
+        break;
+      }
 
         const shotLegacy = allShotsLegacy.get(shot.id);
         const firstFrameForVideo = !is4Grid && propagatedFirstFrame

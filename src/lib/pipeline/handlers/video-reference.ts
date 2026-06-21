@@ -341,7 +341,7 @@ export async function handleBatchReferenceVideo(
 
   const generationId = genId();
 
-  const results: Array<{ shotId: string; sequence: number; status: "ok" | "error"; referenceVideoUrl?: string; error?: string }> = [];
+  const results: Array<{ shotId: string; sequence: number; status: "ok" | "error" | "cancelled"; referenceVideoUrl?: string; error?: string }> = [];
   let doneCount = 0;
   const total = eligible.length;
   for (const shot of eligible) {
@@ -349,7 +349,7 @@ export async function handleBatchReferenceVideo(
       if (taskSignal?.aborted) {
         const skipped = eligible.filter((s) => s.sequence >= shot.sequence);
         for (const s of skipped) {
-          results.push({ shotId: s.id, sequence: s.sequence, status: "cancelled" } as any);
+          results.push({ shotId: s.id, sequence: s.sequence, status: "cancelled" });
         }
         break;
       }
