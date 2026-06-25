@@ -1,9 +1,9 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import crypto from "node:crypto";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
 
 function generateKlingToken(accessKey: string, secretKey: string): string {
   const now = Math.floor(Date.now() / 1000);
@@ -203,7 +203,7 @@ export class KlingVideoProvider implements VideoProvider {
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(videoRes.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(videoRes, filepath);
 
     console.log(`[Kling Video] Saved to ${filepath}`);
     return { filePath: filepath };

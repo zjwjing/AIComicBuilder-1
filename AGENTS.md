@@ -8,7 +8,7 @@ AI Comic Builder is a Next.js web application for creating comic/manga storyboar
 - **Package manager**: pnpm (lockfile: `pnpm-lock.yaml`)
 - **Database**: SQLite via better-sqlite3 + drizzle-orm
 - **Frontend**: Next.js 15 + React 19 + Tailwind CSS 4
-- **AI**: OpenAI (GPT, gpt-image-2), ComfyUI (image/video)
+- **AI**: NVIDIA NIM (free tier, OpenAI-compatible), Agnes AI (image), ComfyUI (image/video)
 - **OS**: Windows (primary dev), Linux (CNB deployment)
 
 ## Completion Criteria
@@ -26,7 +26,8 @@ If any command fails (exit code ≠ 0), the task is not done. Re-read errors, fi
 Every new session MUST:
 1. Read `PROGRESS.md` to understand current state
 2. Read root `AGENTS.md` (this file) for project rules
-3. If `setup.ps1` or `setup.sh` exists, verify environment matches
+3. Read `AGENT_PIPELINE_GUIDE.md` for pipeline entry points
+4. If `setup.ps1` or `setup.sh` exists, verify environment matches
 
 ## Session State Rules
 

@@ -15,7 +15,6 @@ import { Loader2, Download, Plus, Eye, EyeOff, Trash2, Search } from "lucide-rea
 
 const DEFAULT_BASE_URLS: Record<Protocol, string> = {
   openai: "https://api.openai.com",
-  asxs: "https://api.asxs.top/v1",
   sensenova: "https://token.sensenova.cn/v1",
   gemini: "https://generativelanguage.googleapis.com",
   seedance: "https://ark.cn-beijing.volces.com",
@@ -40,13 +39,13 @@ function getProtocolOptions(capability: Capability): { value: Protocol; label: s
       { value: "openai", label: "OpenAI" },
       { value: "gemini", label: "Gemini" },
       { value: "nvidia", label: "NVIDIA" },
+      { value: "nvidia-nim", label: "NVIDIA NIM (Chat)" },
       { value: "agnes", label: "Agnes AI" },
     ];
   }
   if (capability === "image") {
     return [
       { value: "openai", label: "OpenAI" },
-      { value: "asxs", label: "ASXS" },
       { value: "sensenova", label: "SenseNova" },
       { value: "gemini", label: "Gemini" },
       { value: "kling", label: "Kling" },

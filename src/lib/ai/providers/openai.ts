@@ -1,9 +1,9 @@
 import OpenAI from "openai";
 import type { AIProvider, TextOptions, ImageOptions } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
 
 function toErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
@@ -87,7 +87,7 @@ export class OpenAIProvider implements AIProvider {
       timeout,
       maxRetries: 0,
     });
-    this.defaultModel = params?.model || process.env.OPENAI_MODEL || "gpt-4o";
+    this.defaultModel = params?.model || process.env.OPENAI_MODEL || (this.isNvidia ? "minimaxai/minimax-m3" : "gpt-4o");
     this.uploadDir = params?.uploadDir || process.env.UPLOAD_DIR || "./uploads";
   }
 
@@ -113,7 +113,7 @@ export class OpenAIProvider implements AIProvider {
     const dir = path.join(this.uploadDir, "frames");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(imageResponse.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(imageResponse, filepath);
     return filepath;
   }
 

@@ -56,4 +56,3 @@ export async function embedBatchSafe(texts: string[]): Promise<(number[] | null)
   }
 }
 
-export { DEFAULT_MODEL };

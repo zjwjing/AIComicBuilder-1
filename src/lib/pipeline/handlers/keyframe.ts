@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { TEMPERATURE_STRUCTURED } from "@/lib/config/defaults";
 import { db } from "@/lib/db";
-import { shots, episodes, projects, characterRelations } from "@/lib/db/schema";
+import { shots, episodes, projects, characterRelations, shotAssets } from "@/lib/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import {
   type ModelConfig,
@@ -18,7 +18,7 @@ import { buildVisualStyleContext } from "@/lib/visual-style";
 import { insertAssetVersion } from "@/lib/shot-asset-utils";
 import { id as genId } from "@/lib/id";
 import { registerTask } from "@/lib/task-registry";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 
 export async function handleGenerateKeyframePrompts(
   projectId: string,
@@ -58,7 +58,7 @@ export async function handleGenerateKeyframePrompts(
       characters: kpAgentChars.map((c) => ({ name: c.name, description: c.description, visualHint: c.visualHint })),
     }, null, 2);
 
-    const agentResult = await callAndValidateAgent(kpBoundAgent, "keyframe_prompts", kpPrompt);
+    const agentResult = await callAndValidateAgent(kpBoundAgent, "keyframe_prompts", kpPrompt, taskSignal);
     if (agentResult instanceof NextResponse) return agentResult;
 
     // Parse agent output — must be JSON array
@@ -91,12 +91,12 @@ export async function handleGenerateKeyframePrompts(
           savedCount++;
         }
       }
-      if (taskId) completeTask(taskId, { total: agentTotal, completed: savedCount > 0 ? agentTotal : 0, failed: [] });
+      if (taskId) completeTask(taskId, addTaskCost({ total: agentTotal, completed: savedCount > 0 ? agentTotal : 0, failed: [] }, { model: "llm", apiCost: 0, itemCount: agentTotal }));
       console.log(`[KeyframePrompts Agent] Saved ${savedCount} assets from ${agentTotal} shots`);
       return NextResponse.json({ updatedCount: agentTotal, totalShots: kpAgentShots.length });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (taskId) completeTask(taskId, { total: 0, completed: 0, failed: [msg] });
+      if (taskId) completeTask(taskId, addTaskCost({ total: 0, completed: 0, failed: [msg] }, { model: "llm", apiCost: 0, itemCount: 0 }));
       return NextResponse.json({ error: `智能体首尾帧提示词解析失败: ${msg}` }, { status: 422 });
     }
   }
@@ -188,6 +188,18 @@ export async function handleGenerateKeyframePrompts(
   for (const shot of allShots) {
     if (taskSignal?.aborted) { break; }
     try {
+      // Cache check: skip shots that already have keyframe assets
+      const existingAssets = await db.select({ id: shotAssets.id }).from(shotAssets).where(
+        and(eq(shotAssets.shotId, shot.id), eq(shotAssets.type, panelStartType))
+      ).limit(1);
+      if (existingAssets.length > 0) {
+        doneCount++;
+        updatedCount++;
+        if (taskId) updateTaskProgress(taskId, { total, completed: doneCount, failed });
+        console.log(`[GenerateKeyframePrompts] ✓ shot ${shot.sequence} (cached, ${doneCount}/${total})`);
+        continue;
+      }
+
       const basePromptRequest = buildKeyframePromptsRequest(
         [{
           sequence: shot.sequence,
@@ -258,7 +270,20 @@ export async function handleGenerateKeyframePrompts(
     }
   }
 
-  if (taskId) completeTask(taskId, { total, completed: updatedCount, failed });
+  if (taskId) completeTask(taskId, addTaskCost({ total, completed: updatedCount, failed }, { model: "llm", apiCost: 0, itemCount: updatedCount }));
+
+  // Material cache: embed keyframe prompts per shot
+  const embeddedShots = allShots.filter(s => s.prompt || s.videoPrompt);
+  if (embeddedShots.length > 0) {
+    import("@/lib/vector-search/material-cache").then(({ ensureEmbeddings }) =>
+      ensureEmbeddings(embeddedShots.map(s => ({
+        contentType: "shot" as const,
+        contentId: s.id,
+        text: [s.prompt, s.videoPrompt].filter(Boolean).join("\n"),
+      }))),
+    ).catch(() => {});
+  }
+
   console.log(`[GenerateKeyframePrompts] Updated ${updatedCount}/${allShots.length} shots (serial)`);
   return NextResponse.json({ updatedCount, totalShots: allShots.length });
 }

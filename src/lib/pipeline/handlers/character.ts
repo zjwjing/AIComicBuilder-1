@@ -16,7 +16,7 @@ import { detectImageModelFamily } from "@/lib/ai/prompts/character-image";
 import { resolveImageProvider } from "@/lib/ai/provider-factory";
 import { DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_QUALITY, DEFAULT_CHARACTER_IMAGE_SIZE } from "@/lib/config/defaults";
 import { id as genId } from "@/lib/id";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 import { registerTask } from "@/lib/task-registry";
 import {
   loadShotLegacyViewsBatch,
@@ -534,6 +534,6 @@ export async function handleBatchCharacterImage(
     if (taskId) updateTaskProgress(taskId, { total: needImages.length, completed: results.length, failed: results.filter(r => r.status === "error").map(r => r.characterId) });
   }
 
-  if (taskId) completeTask(taskId, { total: needImages.length, completed: results.length, failed: results.filter(r => r.status === "error").map(r => r.characterId) });
+  if (taskId) completeTask(taskId, addTaskCost({ total: needImages.length, completed: results.length, failed: results.filter(r => r.status === "error").map(r => r.characterId) }, { model: "image", apiCost: 0, itemCount: results.length }));
   return NextResponse.json({ results });
 }

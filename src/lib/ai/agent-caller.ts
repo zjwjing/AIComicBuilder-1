@@ -169,19 +169,33 @@ async function callDifyAgentStream(
 
 // ── Unified non-streaming caller ────────────────────────────────────
 
-export async function callAgent(config: AgentConfig, prompt: string): Promise<string> {
+export async function callAgent(config: AgentConfig, prompt: string, signal?: AbortSignal): Promise<string> {
   switch (config.platform) {
     case "bailian":
-      return callBailianAgent(config, prompt);
+      return callBailianAgent(config, prompt, signal);
     case "dify":
-      return callDifyAgent(config, prompt);
+      return callDifyAgent(config, prompt, signal);
     case "coze":
-      return callCozeAgent(config, prompt);
+      return callCozeAgent(config, prompt, signal);
     default:
       throw new Error(`不支持的智能体平台: ${config.platform}`);
   }
 }
 
+
+const AGENT_TIMEOUT_MS = 120_000;
+
+function agentFetchOptions(config: { apiKey: string }, signal?: AbortSignal): {
+  headers: Record<string, string>;
+  signal: AbortSignal;
+} {
+  const timeout = AbortSignal.timeout(AGENT_TIMEOUT_MS);
+  const combined = signal ? AbortSignal.any([timeout, signal]) : timeout;
+  return {
+    headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+    signal: combined,
+  };
+}
 
 // ── 百炼 (DashScope) ────────────────────────────────────────────────
 
@@ -195,20 +209,16 @@ interface BailianResponse {
 export async function callBailianAgent(
   config: { appId: string; apiKey: string },
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const url = `https://dashscope.aliyuncs.com/api/v1/apps/${config.appId}/completion`;
+  const opts = agentFetchOptions(config, signal);
 
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      input: { prompt },
-      parameters: {},
-    }),
-    signal: AbortSignal.timeout(120_000),
+    headers: { ...opts.headers, "X-DashScope-SSE": "disable" },
+    body: JSON.stringify({ input: { prompt }, parameters: {} }),
+    signal: opts.signal,
   });
 
   if (!res.ok) {
@@ -261,23 +271,17 @@ interface DifyResponse {
 async function callDifyAgent(
   config: { appId: string; apiKey: string },
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  // appId is the Dify base URL (e.g. https://api.dify.ai or self-hosted URL)
   const baseUrl = config.appId.replace(/\/+$/, "");
   const url = `${baseUrl}/v1/workflows/run`;
+  const opts = agentFetchOptions(config, signal);
 
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      inputs: { query: prompt },
-      response_mode: "blocking",
-      user: "aicomic-user",
-    }),
-    signal: AbortSignal.timeout(120_000),
+    headers: opts.headers,
+    body: JSON.stringify({ inputs: { query: prompt }, response_mode: "blocking" }),
+    signal: opts.signal,
   });
 
   if (!res.ok) {
@@ -325,20 +329,15 @@ interface CozeResponse {
 async function callCozeAgent(
   config: { appId: string; apiKey: string },
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  const opts = agentFetchOptions(config, signal);
   const url = "https://api.coze.cn/v1/workflow/run";
-
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      workflow_id: config.appId,
-      parameters: { input: prompt },
-    }),
-    signal: AbortSignal.timeout(120_000),
+    headers: opts.headers,
+    body: JSON.stringify({ workflow_id: config.appId, parameters: { input: prompt } }),
+    signal: opts.signal,
   });
 
   if (!res.ok) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recommendTransitions, mergeTransitions, type ShotTransition } from "@/lib/transition-recommender";
+import { recommendTransitions, type ShotTransition } from "@/lib/transition-recommender";
 
 function makeShot(overrides: Partial<{
   id: string;
@@ -137,36 +137,4 @@ describe("recommendTransitions", () => {
   });
 });
 
-describe("mergeTransitions", () => {
-  it("overrides shot transitions with recommendations", () => {
-    const shots = [
-      makeShot({ id: "s1", sequence: 1, transitionIn: "cut", transitionOut: "cut" }),
-      makeShot({ id: "s2", sequence: 2, transitionIn: "cut", transitionOut: "cut" }),
-    ];
-    const recs: ShotTransition[] = [
-      { shotId: "s1", sequence: 1, recommendedTransitionIn: "fade_in", recommendedTransitionOut: "dissolve", reasoning: "test" },
-      { shotId: "s2", sequence: 2, recommendedTransitionIn: "dissolve", recommendedTransitionOut: "fade_out", reasoning: "test" },
-    ];
-    const merged = mergeTransitions(shots, recs);
-    expect(merged[0].transitionIn).toBe("fade_in");
-    expect(merged[0].transitionOut).toBe("dissolve");
-    expect(merged[1].transitionIn).toBe("dissolve");
-    expect(merged[1].transitionOut).toBe("fade_out");
-  });
-
-  it("falls back to existing transition when no recommendation", () => {
-    const shots = [
-      makeShot({ id: "s1", sequence: 1, transitionIn: "wipeleft", transitionOut: "slideright" }),
-    ];
-    const merged = mergeTransitions(shots, []);
-    expect(merged[0].transitionIn).toBe("wipeleft");
-    expect(merged[0].transitionOut).toBe("slideright");
-  });
-
-  it("defaults to cut when nothing is set", () => {
-    const shots = [makeShot({ id: "s1", sequence: 1, transitionIn: null, transitionOut: null })];
-    const merged = mergeTransitions(shots, []);
-    expect(merged[0].transitionIn).toBe("cut");
-    expect(merged[0].transitionOut).toBe("cut");
-  });
-});
+export {};

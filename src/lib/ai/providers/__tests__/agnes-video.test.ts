@@ -111,8 +111,8 @@ describe("generateVideo", () => {
     expect(body.prompt).toBe("a cat walking");
     expect(body.image).toBeUndefined();
     expect(body.width).toBe(1152);
-    expect(body.height).toBe(768);
-    expect(body.num_frames).toBe(121);
+    expect(body.height).toBe(648);
+    expect(body.num_frames).toBe(120);
     expect(body.frame_rate).toBe(24);
   });
 

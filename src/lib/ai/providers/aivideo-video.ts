@@ -1,8 +1,11 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
+
+const AIVIDEO_ALLOWED_DURATIONS_V3 = [5, 10, 15, 20] as const;
+const AIVIDEO_ALLOWED_DURATIONS_V1 = [5, 8] as const;
 
 export class AivideoVideoProvider implements VideoProvider {
   private apiKey: string;
@@ -26,7 +29,6 @@ export class AivideoVideoProvider implements VideoProvider {
     return {
       key: this.apiKey,
       "content-type": "application/json",
-      "user-agent": "Mozilla/5.0",
     };
   }
 
@@ -38,11 +40,12 @@ export class AivideoVideoProvider implements VideoProvider {
   }
 
   private mapDuration(d: number): number {
+    const clamped = Math.max(1, Math.round(d));
     const isV3 = this.model.includes("v3");
-    const allowed = isV3 ? [5, 10, 15, 20] : [5, 8];
+    const allowed = isV3 ? [...AIVIDEO_ALLOWED_DURATIONS_V3] : [...AIVIDEO_ALLOWED_DURATIONS_V1];
     let closest = allowed[0];
     for (const v of allowed) {
-      if (Math.abs(v - d) < Math.abs(closest - d)) closest = v;
+      if (Math.abs(v - clamped) < Math.abs(closest - clamped)) closest = v;
     }
     return closest;
   }
@@ -55,7 +58,6 @@ export class AivideoVideoProvider implements VideoProvider {
       return this.generateT2v(params.prompt, duration, aspectRatio);
     }
 
-    // i2v / i2v_v3: need an image
     const imagePath = "firstFrame" in params && params.firstFrame
       ? params.firstFrame
       : "initialImage" in params && params.initialImage
@@ -78,7 +80,6 @@ export class AivideoVideoProvider implements VideoProvider {
     }
 
     console.log(`[Aivideo] submit i2v: model=${this.model}, duration=${duration}s`);
-
     return this.submitAndPoll(body);
   }
 
@@ -88,7 +89,6 @@ export class AivideoVideoProvider implements VideoProvider {
     aspectRatio: string,
   ): Promise<VideoGenerateResult> {
     console.log(`[Aivideo] submit t2v: model=${this.model}, duration=${duration}s`);
-
     return this.submitAndPoll({
       prompt,
       aspectRatio,
@@ -135,7 +135,7 @@ export class AivideoVideoProvider implements VideoProvider {
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(videoRes.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(videoRes, filepath);
 
     console.log(`[Aivideo] saved: ${filepath}`);
     return { filePath: filepath };
@@ -143,6 +143,7 @@ export class AivideoVideoProvider implements VideoProvider {
 
   private async pollForResult(taskId: string): Promise<string> {
     const maxAttempts = 120;
+    let consecutiveFailures = 0;
 
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise((r) => setTimeout(r, 5_000));
@@ -153,9 +154,13 @@ export class AivideoVideoProvider implements VideoProvider {
       });
 
       if (!res.ok) {
-        // Retry on transient errors
+        consecutiveFailures++;
+        if (consecutiveFailures >= 5) {
+          throw new Error(`Aivideo poll failed: ${res.status} after ${consecutiveFailures} consecutive failures`);
+        }
         continue;
       }
+      consecutiveFailures = 0;
 
       const json = (await res.json()) as { status: string; output?: { url?: string }; message?: string };
       console.log(`[Aivideo] poll ${i + 1}: status=${json.status}`);

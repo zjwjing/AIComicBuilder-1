@@ -6,7 +6,13 @@ export const MODEL_MAX_DURATIONS: Record<string, number> = {
   "veo-3.1-fast-generate-001": 8,
   "kling-v1": 10,
   "kling-v1-5": 10,
-  "kling-v2.5-turbo": 10,
+  "kling-v1-6": 10,
+  "kling-v2": 10,
+  "kling-v2-new": 10,
+  "kling-v2-1": 10,
+  "kling-v2-master": 10,
+  "kling-v2-1-master": 10,
+  "kling-v2-5-turbo": 10,
   "kling-v3": 15,
   "doubao-seedance-1-5-pro-250528": 12,
   "doubao-seedance-1-5-pro-251215": 12,
@@ -23,6 +29,7 @@ export const MODEL_MAX_DURATIONS: Record<string, number> = {
   "ltx-t2v": 30,
   "ltx-flf2v": 30,
   "ltx-4grid": 30,
+  "ltx-2-multiguide": 30,
 };
 
 /** Family-level fallback: if modelId contains this substring, use this duration */

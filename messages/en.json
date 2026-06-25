@@ -51,6 +51,7 @@
     "compareVersions": "Compare Versions",
     "exitCompare": "Exit Compare",
     "generateShots": "Generate Shots",
+    "forceRegenerate": "Force Re-generate",
     "generateFrames": "Generate Frames",
     "generateVideo": "Generate Video",
     "batchGenerateFrames": "Batch Generate Frames",

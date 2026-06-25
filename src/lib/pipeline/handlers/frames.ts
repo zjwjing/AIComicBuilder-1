@@ -14,7 +14,7 @@ import {
 } from "@/lib/generate-utils";
 import { resolveImageProvider, resolveAIProvider } from "@/lib/ai/provider-factory";
 import { resolveSlotContents } from "@/lib/ai/prompts/resolver";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 import { registerTask } from "@/lib/task-registry";
 import { checkContinuity } from "@/lib/pipeline/continuity-check";
 import { findCharacterBySemanticMatch, findCharacterByNameFuzzy, findCharacterByDescriptionMatch } from "@/lib/vector-search";
@@ -552,8 +552,8 @@ export async function handleBatchFrameGenerate(
   console.log(`[BatchFrameGenerate] Done: ${okCount} ok, ${errCount} errors, ${cancelledCount} cancelled, ${skipCount} skipped`);
 
   if (taskId && cancelledCount === 0) {
-    if (errCount > 0) completeTask(taskId, { total, completed: okCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
-    else completeTask(taskId, { total, completed: okCount, failed: [] });
+    if (errCount > 0) completeTask(taskId, addTaskCost({ total, completed: okCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) }, { model: "image", apiCost: 0, itemCount: okCount }));
+    else completeTask(taskId, addTaskCost({ total, completed: okCount, failed: [] }, { model: "image", apiCost: 0, itemCount: okCount }));
   }
 
   return NextResponse.json({ results });
@@ -1001,7 +1001,7 @@ export async function handleBatchSceneFrame(
   const taskSignal = taskId ? registerTask(taskId).signal : undefined;
   if (taskId) updateTaskProgress(taskId, { total: 0, completed: 0, failed: [] });
   if (!modelConfig?.image) {
-    if (taskId) completeTask(taskId, { total: 0, completed: 0, failed: ["No image model configured"] });
+    if (taskId) completeTask(taskId, addTaskCost({ total: 0, completed: 0, failed: ["No image model configured"] }, { model: "image", apiCost: 0, itemCount: 0 }));
     return NextResponse.json(
       diagnosticError("PIPE_002", "No image model configured", "Configure modelConfig.image before generating scene frames."),
       { status: 400 },
@@ -1037,7 +1037,7 @@ export async function handleBatchSceneFrame(
   }> = [];
 
   for (const [shotIdx, shot] of allShots.entries()) {
-    if (taskSignal?.aborted) { if (taskId) completeTask(taskId, { total: allShots.length, completed: shotIdx, failed: ["Cancelled"] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
+    if (taskSignal?.aborted) { if (taskId) completeTask(taskId, addTaskCost({ total: allShots.length, completed: shotIdx, failed: ["Cancelled"] }, { model: "image", apiCost: 0, itemCount: shotIdx })); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
     const refImages = allShotsLegacy.get(shot.id)?.referenceImages ?? [];
     const targets = overwrite
       ? refImages.filter((r) => r.prompt.trim())
@@ -1056,7 +1056,7 @@ export async function handleBatchSceneFrame(
     // Generate all ref images for this shot serially.
     let generated = 0;
     for (const entry of targets) {
-      if (taskSignal?.aborted) { if (taskId) completeTask(taskId, { total: allShots.length, completed: shotIdx, failed: ["Cancelled"] }); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
+if (taskSignal?.aborted) { if (taskId) completeTask(taskId, addTaskCost({ total: allShots.length, completed: shotIdx, failed: ["Cancelled"] }, { model: "image", apiCost: 0, itemCount: shotIdx })); return NextResponse.json({ error: "Cancelled" }, { status: 499 }); }
       try {
         const imagePath = await imageProvider.generateImage(entry.prompt, {
           quality: DEFAULT_IMAGE_QUALITY,
@@ -1096,6 +1096,6 @@ export async function handleBatchSceneFrame(
     if (taskId) updateTaskProgress(taskId, { total: allShots.length, completed: shotIdx + 1, failed: results.filter(r => r.status === "error").map(r => r.shotId) });
   }
 
-  if (taskId) completeTask(taskId, { total: allShots.length, completed: results.filter(r => r.status === "ok").length, failed: results.filter(r => r.status === "error").map(r => r.error!).filter(Boolean) });
+  if (taskId) completeTask(taskId, addTaskCost({ total: allShots.length, completed: results.filter(r => r.status === "ok").length, failed: results.filter(r => r.status === "error").map(r => r.error!).filter(Boolean) }, { model: "image", apiCost: 0, itemCount: results.length }));
   return NextResponse.json({ results });
 }

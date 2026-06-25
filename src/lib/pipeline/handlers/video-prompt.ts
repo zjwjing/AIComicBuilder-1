@@ -24,7 +24,7 @@ import type { AgentCategory } from "@/lib/ai/agent-caller";
 import { diagnosticError } from "@/lib/pipeline/diagnostics";
 import { extractPrimaryVisualStyleReference } from "@/lib/visual-style";
 import { registerTask } from "@/lib/task-registry";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 
 function getPanelFrames(view: ShotLegacyView): string[] {
   return view.panels.filter((p): p is string => !!p);
@@ -486,7 +486,7 @@ export async function handleBatchVideoPrompt(
   const okCount = results.filter((r) => r.status === "ok").length;
   const errCount = results.filter((r) => r.status === "error").length;
   const failedShots = results.filter((r) => r.status === "error").map((r) => r.shotId);
-  if (taskId) completeTask(taskId, { total: eligible.length, completed: okCount, failed: failedShots });
+  if (taskId) completeTask(taskId, addTaskCost({ total: eligible.length, completed: okCount, failed: failedShots }, { model: "llm", apiCost: 0, itemCount: okCount }));
   console.log(`[BatchVideoPrompt] Done: ${okCount} ok, ${errCount} errors, total ${((Date.now() - bvpStartTime) / 1000).toFixed(1)}s`);
   return NextResponse.json({ results, status: "ok" });
 }

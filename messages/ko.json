@@ -51,6 +51,7 @@
     "compareVersions": "버전 비교",
     "exitCompare": "비교 종료",
     "generateShots": "샷 생성",
+    "forceRegenerate": "강제 재생성",
     "generateFrames": "프레임 생성",
     "generateVideo": "영상 생성",
     "batchGenerateFrames": "일괄 프레임 생성",

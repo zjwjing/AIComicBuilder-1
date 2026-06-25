@@ -148,16 +148,6 @@ export default function SettingsPage() {
                 ],
               },
               {
-                key: "image-asxs",
-                label: "ASXS",
-                name: "ASXS Image",
-                protocol: "asxs",
-                baseUrl: "https://api.asxs.top/v1",
-                models: [
-                  { id: "gpt-image-2", name: "GPT Image 2", checked: true },
-                ],
-              },
-              {
                 key: "image-comfyui",
                 label: "ComfyUI",
                 name: "ComfyUI Image",

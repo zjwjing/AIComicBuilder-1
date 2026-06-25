@@ -1,8 +1,8 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
 
 function toDataUrl(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase().replace(".", "");
@@ -89,7 +89,7 @@ export class SeedanceProvider implements VideoProvider {
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(videoResponse.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(videoResponse, filepath);
 
     return { filePath: filepath, lastFrameUrl };
   }

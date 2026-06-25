@@ -51,6 +51,7 @@
     "compareVersions": "バージョン比較",
     "exitCompare": "比較を終了",
     "generateShots": "ショット生成",
+    "forceRegenerate": "強制再生成",
     "generateFrames": "フレーム生成",
     "generateVideo": "動画生成",
     "batchGenerateFrames": "一括フレーム生成",

@@ -84,9 +84,19 @@ function addCameraLoRANode(
  * When imagePath is provided → i2v mode (uses uploaded image).
  * When imagePath is null → t2v mode (uses empty image placeholder + switch).
  */
+const LTX_DIMENSION_MAP: Record<string, [number, number]> = {
+  "16:9": [1280, 720],
+  "9:16": [720, 1280],
+  "1:1": [896, 896],
+  "4:3": [1152, 864],
+  "3:4": [864, 1152],
+  "3:2": [1216, 810],
+  "2:3": [810, 1216],
+  "21:9": [1472, 640],
+};
+
 function getDimensions(ratio?: string): [number, number] {
-  if (ratio === "9:16" || ratio === "portrait") return [720, 1280];
-  return [1280, 720]; // default 16:9 landscape
+  return LTX_DIMENSION_MAP[ratio ?? "16:9"] ?? [1280, 720];
 }
 
 export function buildLTXi2vT2vWorkflow(

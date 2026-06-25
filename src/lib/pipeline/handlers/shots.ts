@@ -3,7 +3,7 @@ import { generateText } from "ai";
 import { createLanguageModel, extractJSON } from "@/lib/ai/ai-sdk";
 import { db } from "@/lib/db";
 import { projects, episodes, characters, shots, dialogues, storyboardVersions, characterRelations, episodeCharacters } from "@/lib/db/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 import {
   type ModelConfig,
   findBoundAgent,
@@ -19,7 +19,7 @@ import { buildShotSplitPrompt, SHOT_SPLIT_SYSTEM } from "@/lib/ai/prompts/shot-s
 import { recommendTransitions } from "@/lib/transition-recommender";
 import { id as genId } from "@/lib/id";
 import { registerTask } from "@/lib/task-registry";
-import { updateTaskProgress, completeTask, failTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, failTask, addTaskCost } from "@/lib/task-utils";
 import {
   loadShotLegacyView,
   getActiveAsset,
@@ -132,6 +132,19 @@ export async function handleShotSplitStream(
     );
   }
 
+  // Material cache: if shots already exist for this episode and force flag not set, skip LLM
+  const forceRegen = _payload?.force === true;
+  if (!forceRegen) {
+    const existingCount = episodeId
+      ? Number(((await db.select({ count: sql<number>`count(*)` }).from(shots).where(and(eq(shots.projectId, projectId), eq(shots.episodeId, episodeId))))[0]?.count ?? 0))
+      : Number(((await db.select({ count: sql<number>`count(*)` }).from(shots).where(eq(shots.projectId, projectId)))[0]?.count ?? 0));
+    if (existingCount > 0) {
+      console.log(`[ShotSplit] Cache hit: ${existingCount} shots already exist for ${episodeId ? `episode ${episodeId}` : `project ${projectId}`}, skipping LLM`);
+      if (taskId) completeTask(taskId, addTaskCost({ total: 1, completed: 1, failed: [] }, { model: "cache", apiCost: 0, itemCount: existingCount }));
+      return NextResponse.json({ shots: existingCount, cached: true });
+    }
+  }
+
   {
     const boundAgent = await findBoundAgent(projectId, "shot_split");
     if (boundAgent) {
@@ -149,7 +162,7 @@ export async function handleShotSplitStream(
           return NextResponse.json({ error: "没有剧本内容，请先编写或生成剧本" }, { status: 400 });
         }
       }
-      const agentResult = await callAndValidateAgent(boundAgent, "shot_split", script);
+      const agentResult = await callAndValidateAgent(boundAgent, "shot_split", script, taskSignal);
       if (agentResult instanceof NextResponse) return agentResult;
 
       // Parse agent output and save to DB (same logic as built-in pipeline)
@@ -579,7 +592,19 @@ export async function handleShotSplitStream(
   }
 
   console.log(`[ShotSplit] Created ${allShots.length} shots from ${sceneChunks.length} chunks into version ${versionLabel} (${versionId})`);
-  if (taskId) completeTask(taskId, { total: sceneChunks.length, completed: sceneChunks.length, failed: chunkResults.filter(r => r.error).map(r => r.error!) });
+  if (taskId) completeTask(taskId, addTaskCost({ total: sceneChunks.length, completed: sceneChunks.length, failed: chunkResults.filter(r => r.error).map(r => r.error!) }, { model: "llm", apiCost: 0, itemCount: sceneChunks.length }));
+
+  // Material cache: embed all new shots for future semantic matching
+  if (shotRows.length > 0) {
+    import("@/lib/vector-search/material-cache").then(({ ensureEmbeddings }) =>
+      ensureEmbeddings(shotRows.map((row, i) => ({
+        contentType: "shot" as const,
+        contentId: row.id,
+        text: allShots[i]?.sceneDescription || "",
+      }))),
+    ).catch(() => {});
+  }
+
   return NextResponse.json({ shots: allShots.length });
 }
 

@@ -7,15 +7,16 @@ function validateEnv() {
 
   if (!process.env.DATABASE_URL) missing.push("DATABASE_URL");
 
-  const hasLLM = process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY;
-  if (!hasLLM) warn.push("No LLM API key set (OPENAI_API_KEY or GEMINI_API_KEY)");
+  const hasLLM = process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY || process.env.AGNES_API_KEY;
+  if (!hasLLM) warn.push("No LLM API key set (OPENAI_API_KEY, GEMINI_API_KEY, or AGNES_API_KEY)");
 
   const hasImage =
     process.env.OPENAI_API_KEY ||
     process.env.KLING_ACCESS_KEY ||
     process.env.DASHSCOPE_API_KEY ||
     process.env.SILICONFLOW_API_KEY ||
-    process.env.COMFYUI_BASE_URL;
+    process.env.COMFYUI_BASE_URL ||
+    process.env.AGNES_API_KEY;
   if (!hasImage) warn.push("No image provider configured");
 
   if (!process.env.AUTH_SECRET) {
@@ -25,9 +26,7 @@ function validateEnv() {
   if (missing.length) {
     console.error("[Bootstrap] Missing critical env vars:", missing.join(", "));
   }
-  if (warn.length) {
-    for (const msg of warn) console.warn("[Bootstrap]", msg);
-  }
+  for (const msg of warn) console.warn("[Bootstrap]", msg);
 }
 
 let bootstrapped = false;

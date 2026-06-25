@@ -22,7 +22,7 @@ import {
   insertAssetVersion,
 } from "@/lib/shot-asset-utils";
 import { id as genId } from "@/lib/id";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 import { registerTask } from "@/lib/task-registry";
 
 export async function handleSingleRefImageGenerate(
@@ -301,7 +301,7 @@ export async function handleGenerateRefPrompts(
     }
   }
   console.log(`[GenerateRefPrompts] Updated ${updatedCount}/${allShots.length} shots (serial)`);
-  if (taskId) completeTask(taskId, { total, completed: doneCount, failed: allShots.filter((_, i) => i >= doneCount - (total - doneCount)).slice(0, total - doneCount).map((s) => s.id) });
+  if (taskId) completeTask(taskId, addTaskCost({ total, completed: doneCount, failed: allShots.filter((_, i) => i >= doneCount - (total - doneCount)).slice(0, total - doneCount).map((s) => s.id) }, { model: "image", apiCost: 0, itemCount: doneCount }));
 
   return NextResponse.json({ updatedCount, totalShots: allShots.length });
 }
@@ -403,7 +403,7 @@ export async function handleBatchRefImageGenerate(
     if (taskId) updateTaskProgress(taskId, { total: allShots.length, completed: results.length, failed: results.filter(r => r.generated === 0 && r.failed > 0).map(r => r.shotId) });
   }
 
-  if (taskId) completeTask(taskId, { total: allShots.length, completed: results.length, failed: results.filter(r => r.generated === 0 && r.failed > 0).map(r => r.shotId) });
+  if (taskId) completeTask(taskId, addTaskCost({ total: allShots.length, completed: results.length, failed: results.filter(r => r.generated === 0 && r.failed > 0).map(r => r.shotId) }, { model: "image", apiCost: 0, itemCount: results.length }));
   return NextResponse.json({ results });
 }
 

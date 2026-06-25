@@ -13,7 +13,6 @@ import { SenseNovaImageProvider } from "./providers/sensenova-image";
 import { SiliconFlowImageProvider } from "./providers/siliconflow-image";
 import { HiDreamImageProvider } from "./providers/hidream-image";
 import { AivideoVideoProvider } from "./providers/aivideo-video";
-import { ASXSImageProvider } from "./providers/asxs-image";
 import { FramepackVideoProvider } from "./providers/framepack-video";
 import { OmnigenImageProvider } from "./providers/omnigen-image";
 import { AgnesVideoProvider } from "./providers/agnes-video";
@@ -91,13 +90,6 @@ export function createAIProvider(config: ProviderConfig, uploadDir?: string): AI
       });
     case "hidream":
       return new HiDreamImageProvider({
-        baseUrl: config.baseUrl,
-        model: config.modelId,
-        ...(uploadDir && { uploadDir }),
-      });
-    case "asxs":
-      return new ASXSImageProvider({
-        apiKey: config.apiKey,
         baseUrl: config.baseUrl,
         model: config.modelId,
         ...(uploadDir && { uploadDir }),

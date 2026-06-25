@@ -165,18 +165,3 @@ export function recommendTransitions(shots: ShotRow[]): ShotTransition[] {
 
   return results;
 }
-
-export function mergeTransitions(
-  shots: ShotRow[],
-  recommendations: ShotTransition[],
-): Array<{ id: string; transitionIn: string; transitionOut: string }> {
-  const recMap = new Map(recommendations.map((r) => [r.shotId, r]));
-  return shots.map((s) => {
-    const rec = recMap.get(s.id);
-    return {
-      id: s.id,
-      transitionIn: rec?.recommendedTransitionIn ?? s.transitionIn ?? "cut",
-      transitionOut: rec?.recommendedTransitionOut ?? s.transitionOut ?? "cut",
-    };
-  });
-}

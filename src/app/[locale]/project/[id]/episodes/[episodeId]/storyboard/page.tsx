@@ -115,6 +115,7 @@ export default function EpisodeStoryboardPage() {
   const [lastBatchAction, setLastBatchAction] = useState<string | null>(null);
   const [compareMode, setCompareMode] = useState(false);
   const [generatingRefPrompts, setGeneratingRefPrompts] = useState(false);
+  const [forceRegenerate, setForceRegenerate] = useState(false);
   const [generatingKeyframeAssets, setGeneratingKeyframeAssets] = useState(false);
   const [newVersionDialogOpen, setNewVersionDialogOpen] = useState(false);
   const [transitionPreview, setTransitionPreview] = useState<Array<{ shotId: string; sequence: number; currentIn: string; currentOut: string; recommendedIn: string; recommendedOut: string; reason: string }> | null>(null);
@@ -256,6 +257,7 @@ export default function EpisodeStoryboardPage() {
           action: "shot_split",
           modelConfig: getModelConfig(),
           episodeId: useProjectStore.getState().currentEpisodeId,
+          payload: forceRegenerate ? { force: true } : undefined,
         }),
       });
 
@@ -985,6 +987,15 @@ export default function EpisodeStoryboardPage() {
               )}
               {generating ? t("common.generating") : t("project.generateShots")}
             </Button>
+            <label className="flex items-center gap-1 text-[11px] text-[--text-muted] cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={forceRegenerate}
+                onChange={(e) => setForceRegenerate(e.target.checked)}
+                className="w-3 h-3"
+              />
+              {t("project.forceRegenerate")}
+            </label>
           </div>
 
           {/* Row 2: Frames */}

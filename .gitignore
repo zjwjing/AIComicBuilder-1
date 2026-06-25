@@ -37,6 +37,7 @@ yarn-error.log*
 # project data and uploads
 data*/
 /uploads/
+/public/outputs/
 
 # vercel
 .vercel

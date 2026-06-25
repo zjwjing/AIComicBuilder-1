@@ -1,8 +1,8 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
 
 // Convert a local file path to a data: URL; http(s) URLs are returned as-is
 export function toImageUrl(imagePathOrUrl: string): string {
@@ -132,7 +132,7 @@ export class WanVideoProvider implements VideoProvider {
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(videoRes.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(videoRes, filepath);
 
     console.log(`[WanVideo] Saved to ${filepath}`);
     return { filePath: filepath };

@@ -52,6 +52,7 @@
     "compareVersions": "对比版本",
     "exitCompare": "退出对比",
     "generateShots": "生成分镜",
+    "forceRegenerate": "强制重新生成",
     "generateFrames": "生成画面",
     "generateVideo": "生成视频",
     "batchGenerateFrames": "批量生成首尾帧",

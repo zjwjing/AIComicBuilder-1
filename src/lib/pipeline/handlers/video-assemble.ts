@@ -8,7 +8,7 @@ import { assembleVideo } from "@/lib/video/ffmpeg";
 import { loadShotLegacyViewsBatch } from "@/lib/shot-asset-utils";
 import { generateDialogueAudio } from "@/lib/audio/tts";
 import { registerTask } from "@/lib/task-registry";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 
 export async function handleVideoAssembleSync(projectId: string, _userId: string, payload?: Record<string, unknown>, _modelConfig?: ModelConfig, episodeId?: string, taskId?: string) {
   const taskSignal = taskId ? registerTask(taskId).signal : undefined;
@@ -169,7 +169,7 @@ export async function handleVideoAssembleSync(projectId: string, _userId: string
         .where(eq(projects.id, projectId));
     }
 
-    if (taskId) completeTask(taskId, { total: 5, completed: 5, failed: [] });
+    if (taskId) completeTask(taskId, addTaskCost({ total: 5, completed: 5, failed: [] }, { model: "ffmpeg", apiCost: 0, itemCount: 1 }));
     console.log(`[VideoAssemble] Completed: ${result.videoPath}`);
     return NextResponse.json({ outputPath: result.videoPath, srtPath: result.srtPath, status: "ok" });
   } catch (err) {

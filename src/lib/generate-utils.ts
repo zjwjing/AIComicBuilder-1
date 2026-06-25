@@ -33,11 +33,13 @@ export async function callAndValidateAgent(
   agent: { platform: string; appId: string; apiKey: string },
   category: AgentCategory,
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<{ text: string } | NextResponse> {
   try {
     const rawText = await callAgent(
       { platform: agent.platform as "bailian" | "dify" | "coze", appId: agent.appId, apiKey: agent.apiKey },
       prompt,
+      signal,
     );
     if (category !== "keyframe_prompts" && category !== "video_prompts") {
       validateAgentOutput(category, rawText);

@@ -72,11 +72,6 @@ describe("createAIProvider", () => {
     expect(provider.generateImage).toBeDefined();
   });
 
-  it("creates a provider for 'asxs' protocol", () => {
-    const provider = createAIProvider(makeTextConfig("asxs"));
-    expect(provider.generateImage).toBeDefined();
-  });
-
   it("creates a provider for 'omnigen' protocol", () => {
     const provider = createAIProvider(makeTextConfig("omnigen"));
     expect(provider.generateImage).toBeDefined();

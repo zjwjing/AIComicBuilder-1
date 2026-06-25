@@ -159,10 +159,29 @@ export async function POST(request: Request) {
       });
     }
 
-    if (body.protocol === "asxs" && body.capability === "image") {
+    if (body.protocol === "nvidia-nim" && body.capability === "text") {
       return NextResponse.json({
         models: [
-          { id: "gpt-image-2", name: "GPT Image 2" },
+          { id: "minimaxai/minimax-m3", name: "MiniMax-M3" },
+          { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek-V4 Flash" },
+          { id: "deepseek-ai/deepseek-v4-pro", name: "DeepSeek-V4 Pro" },
+          { id: "qwen/qwen3.5-122b-a10b", name: "Qwen3.5-122B" },
+          { id: "qwen/qwen3.5-397b-a17b", name: "Qwen3.5-397B" },
+          { id: "qwen/qwen3-next-80b-a3b-instruct", name: "Qwen3 Next 80B" },
+          { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6" },
+          { id: "nvidia/nemotron-3-super-120b-a12b", name: "Nemotron-3 Super 120B" },
+          { id: "nvidia/nemotron-3-nano-30b-a3b", name: "Nemotron-3 Nano 30B" },
+          { id: "nvidia/nemotron-mini-4b-instruct", name: "Nemotron-Mini 4B" },
+          { id: "minimaxai/minimax-m2.7", name: "MiniMax-M2.7" },
+          { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B" },
+          { id: "openai/gpt-oss-20b", name: "GPT-OSS 20B" },
+          { id: "meta/llama-3.3-70b-instruct", name: "Llama 3.3 70B" },
+          { id: "meta/llama-3.1-70b-instruct", name: "Llama 3.1 70B" },
+          { id: "meta/llama-3.1-8b-instruct", name: "Llama 3.1 8B" },
+          { id: "mistralai/mistral-large-3-675b-instruct-2512", name: "Mistral-Large 3 675B" },
+          { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral-Medium 3.5 128B" },
+          { id: "mistralai/ministral-14b-instruct-2512", name: "Ministral 14B" },
+          { id: "upstage/solar-10.7b-instruct", name: "Solar 10.7B" },
         ],
       });
     }
@@ -189,6 +208,31 @@ export async function POST(request: Request) {
         models: [
           { id: "nvidia/cosmos-predict2-2b-text2image", name: "Cosmos-Predict2 2B Text2Image" },
           { id: "nvidia/cosmos-predict2-14b-text2image", name: "Cosmos-Predict2 14B Text2Image" },
+        ],
+      });
+    }
+
+    if (body.protocol === "agnes" && body.capability === "video") {
+      return NextResponse.json({
+        models: [
+          { id: "agnes-video-v2.0", name: "Agnes Video 2.0" },
+          { id: "agnes-1.5-flash", name: "Agnes 1.5 Flash" },
+        ],
+      });
+    }
+
+    if (body.protocol === "agnes" && body.capability === "image") {
+      return NextResponse.json({
+        models: [
+          { id: "agnes-image-2.0-flash", name: "Agnes Image 2.0 Flash" },
+        ],
+      });
+    }
+
+    if (body.protocol === "agnes" && body.capability === "text") {
+      return NextResponse.json({
+        models: [
+          { id: "agnes-text-2.0-flash", name: "Agnes Text 2.0 Flash" },
         ],
       });
     }

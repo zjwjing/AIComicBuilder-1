@@ -78,6 +78,7 @@ vi.mock("@/lib/task-utils", () => ({
   updateTaskProgress: mockUpdateProgress,
   completeTask: mockCompleteTask,
   failTask: mockFailTask,
+  addTaskCost: vi.fn((result, cost) => ({ ...result, costs: [cost] })),
 }));
 
 import { handleShotSplitStream } from "../shots";

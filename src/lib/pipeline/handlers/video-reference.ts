@@ -26,7 +26,7 @@ import {
   loadShotLegacyViewsBatch,
   insertAssetVersion,
 } from "@/lib/shot-asset-utils";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 import { registerTask } from "@/lib/task-registry";
 import { id as genId } from "@/lib/id";
 
@@ -497,6 +497,6 @@ export async function handleBatchReferenceVideo(
     }
   }
 
-  if (taskId) completeTask(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
+  if (taskId) completeTask(taskId, addTaskCost({ total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) }, { model: "video", apiCost: 0, itemCount: doneCount }));
   return NextResponse.json({ results });
 }

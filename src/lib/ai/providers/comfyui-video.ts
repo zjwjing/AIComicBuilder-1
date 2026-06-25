@@ -1,7 +1,6 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult, CameraControl, SigmaPreset } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -9,6 +8,7 @@ import { id as genId } from "@/lib/id";
 import { buildLTXi2vT2vWorkflow, buildLTXFlf2vWorkflow, getSigmaSchedules, getCameraLoRAName } from "./ltx-workflows";
 import { preflightWorkflow, type ModelRef } from "@/lib/comfyui/preflight";
 import { ErrorCodes } from "@/lib/comfyui/errors";
+import { streamBodyToFile } from "./stream-utils";
 
 const LTX_PRO_NEGATIVE =
   "pc game, console game, video game, cartoon, childish, ugly,nsfw,\u6587\u5b57\uff0c\u6c34\u5370\uff0c\u5b57\u5e55\uff0ctext, subtitles, captions, burned-in text, overlay text, watermark, logo, signature, numbers, letters, blurry text, garbage characters, unreadable symbols";
@@ -709,7 +709,7 @@ export class ComfyUIVideoProvider implements VideoProvider {
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(videoRes.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(videoRes, filepath);
     console.log(`  [generateVideo] Saved: ${filepath}`);
 
     return { filePath: filepath };

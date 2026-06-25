@@ -1,8 +1,27 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
+
+const AGNES_ASPECT_MAP: Record<string, { width: number; height: number }> = {
+  "16:9": { width: 1152, height: 648 },
+  "9:16": { width: 648, height: 1152 },
+  "1:1": { width: 768, height: 768 },
+  "4:3": { width: 1024, height: 768 },
+  "3:4": { width: 768, height: 1024 },
+  "3:2": { width: 1152, height: 768 },
+  "2:3": { width: 768, height: 1152 },
+  "21:9": { width: 1344, height: 576 },
+};
+
+function resolveResolution(ratio: string): { width: number; height: number } {
+  return AGNES_ASPECT_MAP[ratio] ?? { width: 1152, height: 768 };
+}
+
+function resolveFrameCount(durationSec: number): number {
+  return Math.max(25, Math.min(193, Math.round(durationSec * 24)));
+}
 
 export class AgnesVideoProvider implements VideoProvider {
   private apiKey: string;
@@ -23,24 +42,25 @@ export class AgnesVideoProvider implements VideoProvider {
   }
 
   async generateVideo(params: VideoGenerateParams): Promise<VideoGenerateResult> {
+    const { width, height } = resolveResolution(params.ratio);
+    const numFrames = resolveFrameCount(params.duration);
+
     const body: Record<string, unknown> = {
       model: this.model,
       prompt: params.prompt,
-      width: 1152,
-      height: 768,
-      num_frames: 121,
+      width,
+      height,
+      num_frames: numFrames,
       frame_rate: 24,
     };
 
     if ("firstFrame" in params && params.firstFrame) {
-      const base64 = this.fileToBase64(params.firstFrame);
-      body.image = base64;
+      body.image = this.fileToBase64(params.firstFrame);
     } else if ("initialImage" in params && params.initialImage) {
-      const base64 = this.fileToBase64(params.initialImage);
-      body.image = base64;
+      body.image = this.fileToBase64(params.initialImage);
     }
 
-    console.log(`[AgnesVideo] Submitting: model=${this.model}, hasImage=${"image" in body}`);
+    console.log(`[AgnesVideo] Submitting: model=${this.model}, ratio=${params.ratio}, ${width}x${height}, ${numFrames}fr`);
 
     const submitRes = await fetch(`${this.baseUrl}/videos`, {
       method: "POST",
@@ -79,19 +99,19 @@ export class AgnesVideoProvider implements VideoProvider {
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(videoRes.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(videoRes, filepath);
 
     console.log(`[AgnesVideo] Saved: ${filepath}`);
     return { filePath: filepath };
   }
 
   private fileToBase64(filePath: string): string {
-    const data = fs.readFileSync(filePath);
-    return data.toString("base64");
+    return fs.readFileSync(filePath).toString("base64");
   }
 
   private async pollForResult(taskId: string): Promise<string> {
     const maxAttempts = 120;
+    let consecutiveFailures = 0;
 
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise((r) => setTimeout(r, 5_000));
@@ -101,7 +121,14 @@ export class AgnesVideoProvider implements VideoProvider {
         signal: AbortSignal.timeout(15_000),
       });
 
-      if (!res.ok) continue;
+      if (!res.ok) {
+        consecutiveFailures++;
+        if (consecutiveFailures >= 5) {
+          throw new Error(`Agnes video poll failed: ${res.status} after ${consecutiveFailures} consecutive failures`);
+        }
+        continue;
+      }
+      consecutiveFailures = 0;
 
       const json = (await res.json()) as {
         status?: string;
@@ -124,6 +151,6 @@ export class AgnesVideoProvider implements VideoProvider {
       }
     }
 
-    throw new Error("Agnes video generation timed out after 10 minutes");
+    throw new Error(`Agnes video generation timed out after ${(maxAttempts * 5) / 60} minutes`);
   }
 }

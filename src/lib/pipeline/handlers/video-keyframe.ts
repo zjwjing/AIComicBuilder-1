@@ -20,7 +20,7 @@ import { enhanceVideoPrompt } from "@/lib/ai/prompts/video-enhance";
 import { inferVideoPromptFamily } from "@/lib/ai/video-model-strategy";
 import { buildVisualStyleContext } from "@/lib/visual-style";
 import { extractLastVideoFrame } from "@/lib/video/ffmpeg";
-import { updateTaskProgress, completeTask } from "@/lib/task-utils";
+import { updateTaskProgress, completeTask, addTaskCost } from "@/lib/task-utils";
 import { registerTask } from "@/lib/task-registry";
 import { id as genId } from "@/lib/id";
 
@@ -517,6 +517,6 @@ export async function handleBatchVideoGenerate(
       }
   }
 
-  if (taskId) completeTask(taskId, { total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) });
+  if (taskId) completeTask(taskId, addTaskCost({ total, completed: doneCount, failed: results.filter(r => r.status === "error").map(r => r.shotId!).filter(Boolean) }, { model: "video", apiCost: 0, itemCount: doneCount }));
   return NextResponse.json({ results });
 }

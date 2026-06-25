@@ -1,11 +1,11 @@
 import type { AIProvider, TextOptions, ImageOptions, WorkflowFamily } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
 import { preflightWorkflow } from "@/lib/comfyui/preflight";
 import { ErrorCodes } from "@/lib/comfyui/errors";
 import { ERNIE_IMAGE_API_PROMPT } from "./_workflows/ernie-image-api";
+import { streamBodyToFile } from "./stream-utils";
 
 type ComfyPromptResponse = {
   prompt_id?: string;
@@ -695,7 +695,7 @@ export class ComfyUIImageProvider implements AIProvider {
     const dir = path.join(this.uploadDir, "frames");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(imageRes.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(imageRes, filepath);
     return filepath;
   }
 

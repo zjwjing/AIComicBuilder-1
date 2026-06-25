@@ -11,14 +11,31 @@ export interface BatchProgress {
   failed: string[];
 }
 
-export type TaskRow = typeof tasks.$inferSelect;
+/** Per-item cost estimate (USD). Filled by pipeline handlers. */
+export interface TaskCost {
+  /** Model used for this task */
+  model?: string;
+  /** USD cost for API calls made */
+  apiCost?: number;
+  /** Number of items generated */
+  itemCount?: number;
+}
 
-export async function createTask(projectId: string, type: string, payload?: Record<string, unknown>, episodeId?: string): Promise<{ id: string }> {
+export type TaskRow = typeof tasks.$inferSelect;
+export type TaskType = TaskRow["type"];
+export type TaskResult = TaskRow["result"];
+
+export async function createTask(
+  projectId: string,
+  type: TaskType,
+  payload?: Record<string, unknown>,
+  episodeId?: string,
+): Promise<{ id: string }> {
   const taskId = genId();
   await db.insert(tasks).values({
     id: taskId,
     projectId,
-    type: type as any,
+    type,
     status: "running",
     result: {},
     payload: payload ?? {},
@@ -27,20 +44,33 @@ export async function createTask(projectId: string, type: string, payload?: Reco
   return { id: taskId };
 }
 
-export function updateTaskProgress(taskId: string, progress: BatchProgress) {
-  emitTaskEvent(taskId, "progress", { progress: progress as any });
+function asTaskResult(value: BatchProgress | Record<string, unknown> | null | undefined): TaskResult {
+  return value as unknown as TaskResult;
+}
+
+export function updateTaskProgress(taskId: string, progress: BatchProgress): void {
+  emitTaskEvent(taskId, "progress", { progress });
   db.update(tasks)
-    .set({ result: progress as any })
+    .set({ result: asTaskResult(progress) })
     .where(eq(tasks.id, taskId))
     .then();
 }
 
-export function completeTask(taskId: string, result?: any) {
+/** Accumulate cost into the task result. Call from handlers after each batch item. */
+export function addTaskCost(
+  result: Record<string, unknown>,
+  cost: TaskCost,
+): Record<string, unknown> {
+  const existing = (result.costs as TaskCost[]) ?? [];
+  return { ...result, costs: [...existing, cost] };
+}
+
+export function completeTask(taskId: string, result?: Record<string, unknown>): void {
   removeAllTaskListeners(taskId);
   unregisterTask(taskId);
   emitTaskEvent(taskId, "complete", { result: result ?? {} });
   db.update(tasks)
-    .set({ status: "completed", result: result ?? {} })
+    .set({ status: "completed", result: asTaskResult(result) })
     .where(eq(tasks.id, taskId))
     .then();
 }

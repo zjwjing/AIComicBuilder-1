@@ -74,7 +74,7 @@ export function buildCharacterImagePrompt(
   switch (modelFamily) {
     case "agnes":
     case "sensenova":
-      return `3D迪士尼动画风格，皮克斯式渲染，角色全身立绘，纯白背景，角色居中站立，不要出现任何文字标签。\n角色名：${characterName || ""}\n角色描述：${description || ""}`;
+      return `Character ${characterName || "Unknown"}: ${description || ""}. Full body character sheet, clean white background, centered, front-facing, neutral expression, consistent design. Pixar-style 3D rendering, soft lighting, high detail. No text labels, no logos, no watermark.`;
     default:
       return buildCharacterTurnaroundPrompt(description, characterName);
   }

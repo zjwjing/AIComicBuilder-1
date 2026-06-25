@@ -1,8 +1,8 @@
 import type { AIProvider, TextOptions, ImageOptions } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
 
 // ── Model family detection ──────────────────────────────────────────────────
 
@@ -214,7 +214,7 @@ export class DashScopeImageProvider implements AIProvider {
     const dir = path.join(this.uploadDir, "images");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(imageRes.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(imageRes, filepath);
 
     console.log(`[DashScopeImage] Saved to ${filepath}`);
     return filepath;

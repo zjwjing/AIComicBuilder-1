@@ -1,8 +1,8 @@
 import type { VideoProvider, VideoGenerateParams, VideoGenerateResult } from "../types";
-import fs, { createWriteStream } from "node:fs";
+import fs from "node:fs";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { id as genId } from "@/lib/id";
+import { streamBodyToFile } from "./stream-utils";
 
 type GradioEvent =
   | { type: "data"; data: unknown[] }
@@ -10,6 +10,19 @@ type GradioEvent =
   | { type: "progress"; data: { index: number; length: number; desc: string } }
   | { type: "heartbeat"; data: string }
   | { type: "log"; data: string };
+
+const FRAMEPACK_DEFAULTS = {
+  guidanceScale: 9,
+  numSteps: 25,
+  frameRate: 16,
+  videoDuration: 16,
+  noiseAugStrength: 1.0,
+  conditioningScale: 10.0,
+  seedOffset: 0,
+  numP2s: 6,
+  flgSymmetric: true,
+  flgFaceCrop: 16,
+} as const;
 
 export class FramepackVideoProvider implements VideoProvider {
   private baseUrl: string;
@@ -68,6 +81,8 @@ export class FramepackVideoProvider implements VideoProvider {
 
     while (Date.now() - startTime < maxDuration) {
       try {
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
         const res = await fetch(url, { signal: signal ?? AbortSignal.timeout(60_000) });
         if (!res.ok) {
           await new Promise((r) => setTimeout(r, 5000));
@@ -86,8 +101,8 @@ export class FramepackVideoProvider implements VideoProvider {
             if (typeof videoData === "string") return videoData;
           }
         }
-      } catch {
-        // Timeout or network error, keep polling
+      } catch (err) {
+        if (err && typeof err === "object" && "name" in err && (err as Error).name === "AbortError") throw err;
       }
 
       await new Promise((r) => setTimeout(r, 3000));
@@ -115,19 +130,14 @@ export class FramepackVideoProvider implements VideoProvider {
           } else if (currentEvent === "progress") {
             events.push({ type: "progress", data: parsed });
           }
-        } catch {
-          // skip unparseable
-        }
+        } catch { /* skip unparseable */ }
       }
     }
 
     return events;
   }
 
-  private async downloadVideo(
-    eventId: string,
-    videoRef: string,
-  ): Promise<string> {
+  private async downloadVideo(videoRef: string): Promise<string> {
     let videoUrl: string;
     if (videoRef.startsWith("http")) {
       videoUrl = videoRef;
@@ -146,7 +156,7 @@ export class FramepackVideoProvider implements VideoProvider {
     const dir = path.join(this.uploadDir, "videos");
     fs.mkdirSync(dir, { recursive: true });
     const filepath = path.join(dir, filename);
-    await pipeline(res.body! as any, createWriteStream(filepath));
+    await streamBodyToFile(res, filepath);
 
     return filepath;
   }
@@ -174,14 +184,14 @@ export class FramepackVideoProvider implements VideoProvider {
       "",
       seed,
       duration,
-      9,
-      25,
-      1.0,
-      10.0,
-      0.0,
-      6,
-      true,
-      16,
+      FRAMEPACK_DEFAULTS.guidanceScale,
+      FRAMEPACK_DEFAULTS.numSteps,
+      FRAMEPACK_DEFAULTS.noiseAugStrength,
+      FRAMEPACK_DEFAULTS.conditioningScale,
+      FRAMEPACK_DEFAULTS.seedOffset,
+      FRAMEPACK_DEFAULTS.numP2s,
+      FRAMEPACK_DEFAULTS.flgSymmetric,
+      FRAMEPACK_DEFAULTS.flgFaceCrop,
     ];
 
     console.log(`[FramepackVideo] Starting generation, duration=${duration}s, seed=${seed}`);
@@ -191,7 +201,7 @@ export class FramepackVideoProvider implements VideoProvider {
     const videoRef = await this.pollForVideo(eventId);
 
     console.log(`[FramepackVideo] Downloading video from: ${videoRef}`);
-    const filePath = await this.downloadVideo(eventId, videoRef);
+    const filePath = await this.downloadVideo(videoRef);
 
     console.log(`[FramepackVideo] Saved: ${filePath}`);
     return { filePath };

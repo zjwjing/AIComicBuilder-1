@@ -135,25 +135,30 @@ export async function storeEmbedding(
   });
 }
 
+type EmbeddingContentType = "character" | "shot" | "scene" | "episode";
+
 export async function getEmbedding(
-  contentType: string,
+  contentType: EmbeddingContentType,
   contentId: string,
 ): Promise<StoredEmbedding | null> {
   const rows = await db
     .select()
     .from(embeddings)
-    .where(and(eq(embeddings.contentType, contentType as any), eq(embeddings.contentId, contentId)))
+    .where(and(eq(embeddings.contentType, contentType), eq(embeddings.contentId, contentId)))
     .limit(1);
   if (rows.length === 0) return null;
   const row = rows[0];
   return { ...row, vector: JSON.parse(row.vector) };
 }
 
-export async function hasEmbedding(contentType: string, contentId: string): Promise<boolean> {
+export async function hasEmbedding(
+  contentType: EmbeddingContentType,
+  contentId: string,
+): Promise<boolean> {
   const rows = await db
     .select({ id: embeddings.id })
     .from(embeddings)
-    .where(and(eq(embeddings.contentType, contentType as any), eq(embeddings.contentId, contentId)))
+    .where(and(eq(embeddings.contentType, contentType), eq(embeddings.contentId, contentId)))
     .limit(1);
   return rows.length > 0;
 }
