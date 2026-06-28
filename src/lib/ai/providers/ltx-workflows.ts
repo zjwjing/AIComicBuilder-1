@@ -196,6 +196,14 @@ export function buildLTXi2vT2vWorkflow(
         model: ["320:316", 0],
       },
     },
+    "320:335": {
+      class_type: "LoraLoaderModelOnly",
+      inputs: {
+        lora_name: "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
+        strength_model: 0.8,
+        model: ["320:327", 0],
+      },
+    },
     "320:327": {
       class_type: "LoraLoaderModelOnly",
       inputs: {
@@ -209,7 +217,7 @@ export function buildLTXi2vT2vWorkflow(
       inputs: {
         lora_name: "ltx2.3-video-restoration-general.safetensors",
         strength_model: 1.0,
-        model: ["320:327", 0],
+        model: isT2v ? ["320:327", 0] : ["320:335", 0],
       },
     },
     "320:329": {
