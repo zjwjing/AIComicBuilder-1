@@ -108,12 +108,19 @@ export function buildLTXi2vT2vWorkflow(
   ratio?: string,
   sigmaPreset?: SigmaPreset,
   cameraControl?: CameraControl,
+  faceIdLoRA?: "celebvhq" | "talkvid",
 ): Record<string, unknown> {
   const seed = randomSeed();
   const isT2v = !imagePath;
   const [width, height] = getDimensions(ratio);
   const sigmas = getSigmaSchedules(sigmaPreset);
   const cameraLoraName = getCameraLoRAName(cameraControl);
+
+  const faceIdLoraName = faceIdLoRA === "celebvhq"
+    ? "ltx-2.3-id-lora-celebvhq-3k.safetensors"
+    : faceIdLoRA === "talkvid"
+      ? "ltx-2.3-id-lora-talkvid-3k.safetensors"
+      : undefined;
 
   const workflow: Record<string, unknown> = {
     "75": {
@@ -448,6 +455,14 @@ export function buildLTXi2vT2vWorkflow(
 
   if (cameraLoraName) {
     addCameraLoRANode(workflow, "320:285", cameraLoraName, "320:333", ["320:329"]);
+  }
+
+  if (faceIdLoraName) {
+    workflow["320:336"] = {
+      class_type: "LoraLoaderModelOnly",
+      inputs: { lora_name: faceIdLoraName, strength_model: 0.6, model: ["320:328", 0] },
+    };
+    (workflow["320:285"] as any).inputs.model = ["320:336", 0];
   }
 
   if (isT2v) {
